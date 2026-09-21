@@ -18,6 +18,8 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-24.04
+    env:
+      IMAGE_TAG: custom-payment
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -30,4 +32,4 @@ jobs:
         with:
           context: .
           push: true
-          tags: ghcr.io/charleybibby-debug/one-ai:${{ inputs.image_tag }}
+          tags: ghcr.io/charleybibby-debug/one-ai:${{ env.IMAGE_TAG }}
