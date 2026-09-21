@@ -1,6 +1,9 @@
 name: Build deployment image
 
 on:
+  push:
+    branches:
+      - custom/payment
   workflow_dispatch:
     inputs:
       image_tag:
