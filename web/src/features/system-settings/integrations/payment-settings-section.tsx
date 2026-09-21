@@ -47,6 +47,7 @@ import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { handleServerError } from '@/lib/handle-server-error'
+import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 
 import { confirmPaymentCompliance } from '../api'
@@ -148,6 +149,23 @@ const paymentSchema = z.object({
   StripeUnitPrice: z.coerce.number().min(0),
   StripeMinTopUp: z.coerce.number().min(0),
   StripePromotionCodesEnabled: z.boolean(),
+  WeChatPayDirectEnabled: z.boolean(),
+  WeChatPayAppID: z.string(),
+  WeChatPayMchID: z.string(),
+  WeChatPayMchSerialNo: z.string(),
+  WeChatPayPrivateKey: z.string(),
+  WeChatPayAPIv3Key: z
+    .string()
+    .refine(
+      (value) => !value.trim() || value.trim().length === 32,
+      'WeChat Pay API v3 key must be exactly 32 characters.'
+    ),
+  WeChatPayPlatformPublicKeyID: z.string(),
+  WeChatPayPlatformPublicKey: z.string(),
+  AlipayAppID: z.string(),
+  AlipayPrivateKey: z.string(),
+  AlipayPublicKey: z.string(),
+  AlipayDirectEnabled: z.boolean(),
   CreemApiKey: z.string(),
   CreemWebhookSecret: z.string(),
   CreemTestMode: z.boolean(),
@@ -434,6 +452,18 @@ export function PaymentSettingsSection({
       StripeUnitPrice: values.StripeUnitPrice,
       StripeMinTopUp: values.StripeMinTopUp,
       StripePromotionCodesEnabled: values.StripePromotionCodesEnabled,
+      WeChatPayDirectEnabled: values.WeChatPayDirectEnabled,
+      WeChatPayAppID: values.WeChatPayAppID.trim(),
+      WeChatPayMchID: values.WeChatPayMchID.trim(),
+      WeChatPayMchSerialNo: values.WeChatPayMchSerialNo.trim(),
+      WeChatPayPrivateKey: values.WeChatPayPrivateKey.trim(),
+      WeChatPayAPIv3Key: values.WeChatPayAPIv3Key.trim(),
+      WeChatPayPlatformPublicKeyID: values.WeChatPayPlatformPublicKeyID.trim(),
+      WeChatPayPlatformPublicKey: values.WeChatPayPlatformPublicKey.trim(),
+      AlipayAppID: values.AlipayAppID.trim(),
+      AlipayPrivateKey: values.AlipayPrivateKey.trim(),
+      AlipayPublicKey: values.AlipayPublicKey.trim(),
+      AlipayDirectEnabled: values.AlipayDirectEnabled,
       CreemApiKey: values.CreemApiKey.trim(),
       CreemWebhookSecret: values.CreemWebhookSecret.trim(),
       CreemTestMode: values.CreemTestMode,
@@ -479,6 +509,20 @@ export function PaymentSettingsSection({
       StripeMinTopUp: initialRef.current.StripeMinTopUp,
       StripePromotionCodesEnabled:
         initialRef.current.StripePromotionCodesEnabled,
+      WeChatPayDirectEnabled: initialRef.current.WeChatPayDirectEnabled,
+      WeChatPayAppID: initialRef.current.WeChatPayAppID.trim(),
+      WeChatPayMchID: initialRef.current.WeChatPayMchID.trim(),
+      WeChatPayMchSerialNo: initialRef.current.WeChatPayMchSerialNo.trim(),
+      WeChatPayPrivateKey: initialRef.current.WeChatPayPrivateKey.trim(),
+      WeChatPayAPIv3Key: initialRef.current.WeChatPayAPIv3Key.trim(),
+      WeChatPayPlatformPublicKeyID:
+        initialRef.current.WeChatPayPlatformPublicKeyID.trim(),
+      WeChatPayPlatformPublicKey:
+        initialRef.current.WeChatPayPlatformPublicKey.trim(),
+      AlipayAppID: initialRef.current.AlipayAppID.trim(),
+      AlipayPrivateKey: initialRef.current.AlipayPrivateKey.trim(),
+      AlipayPublicKey: initialRef.current.AlipayPublicKey.trim(),
+      AlipayDirectEnabled: initialRef.current.AlipayDirectEnabled,
       CreemApiKey: initialRef.current.CreemApiKey.trim(),
       CreemWebhookSecret: initialRef.current.CreemWebhookSecret.trim(),
       CreemTestMode: initialRef.current.CreemTestMode,
@@ -600,6 +644,44 @@ export function PaymentSettingsSection({
         key: 'StripePromotionCodesEnabled',
         value: sanitized.StripePromotionCodesEnabled,
       })
+    }
+
+    for (const key of [
+      'WeChatPayAppID',
+      'WeChatPayMchID',
+      'WeChatPayMchSerialNo',
+      'WeChatPayPlatformPublicKeyID',
+      'AlipayAppID',
+    ] as const) {
+      if (sanitized[key] !== initial[key]) {
+        updates.push({ key, value: sanitized[key] })
+      }
+    }
+
+    if (sanitized.WeChatPayDirectEnabled !== initial.WeChatPayDirectEnabled) {
+      updates.push({
+        key: 'WeChatPayDirectEnabled',
+        value: sanitized.WeChatPayDirectEnabled,
+      })
+    }
+
+    if (sanitized.AlipayDirectEnabled !== initial.AlipayDirectEnabled) {
+      updates.push({
+        key: 'AlipayDirectEnabled',
+        value: sanitized.AlipayDirectEnabled,
+      })
+    }
+
+    for (const key of [
+      'WeChatPayPrivateKey',
+      'WeChatPayAPIv3Key',
+      'WeChatPayPlatformPublicKey',
+      'AlipayPrivateKey',
+      'AlipayPublicKey',
+    ] as const) {
+      if (sanitized[key] && sanitized[key] !== initial[key]) {
+        updates.push({ key, value: sanitized[key] })
+      }
     }
 
     if (
@@ -879,9 +961,13 @@ export function PaymentSettingsSection({
           />
           <Tabs defaultValue='general' className='min-w-0'>
             <div className='overflow-x-auto pb-1'>
-              <TabsList className='grid min-w-[44rem] grid-cols-6'>
+              <TabsList className='grid min-w-[58rem] grid-cols-8'>
                 <TabsTrigger value='general'>{t('General')}</TabsTrigger>
                 <TabsTrigger value='epay'>Epay</TabsTrigger>
+                <TabsTrigger value='alipay'>{t('Alipay Direct')}</TabsTrigger>
+                <TabsTrigger value='wechat-pay'>
+                  {t('WeChat Pay Direct')}
+                </TabsTrigger>
                 <TabsTrigger value='stripe'>{t('Stripe')}</TabsTrigger>
                 <TabsTrigger value='creem'>Creem</TabsTrigger>
                 <TabsTrigger value='waffo-pancake'>Waffo Pancake</TabsTrigger>
@@ -919,7 +1005,7 @@ export function PaymentSettingsSection({
                         </FormControl>
                         <FormDescription>
                           {t(
-                            'How much to charge for each US dollar of balance (Epay)'
+                            'Amount charged per US dollar of balance for Epay and official direct payments'
                           )}
                         </FormDescription>
                         <FormMessage />
@@ -942,7 +1028,9 @@ export function PaymentSettingsSection({
                           />
                         </FormControl>
                         <FormDescription>
-                          {t('Smallest USD amount users can recharge (Epay)')}
+                          {t(
+                            'Minimum USD recharge amount for Epay and official direct payments'
+                          )}
                         </FormDescription>
                         <FormMessage />
                       </FormItem>
@@ -1247,6 +1335,251 @@ export function PaymentSettingsSection({
                         <FormDescription>
                           {t('Leave blank unless rotating the secret')}
                         </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+              </div>
+            </TabsContent>
+
+            <TabsContent value='alipay' className={paymentTabContentClassName}>
+              <div className='space-y-4'>
+                <div>
+                  <h3 className='text-lg font-medium'>
+                    {t('Alipay official direct connection')}
+                  </h3>
+                  <p className='text-muted-foreground text-sm'>
+                    {t(
+                      'Connect directly to Alipay Open Platform using RSA2 signatures.'
+                    )}
+                  </p>
+                </div>
+                <FormField
+                  control={form.control}
+                  name='AlipayDirectEnabled'
+                  render={({ field }) => (
+                    <FormItem className='flex items-center justify-between rounded-lg border p-4'>
+                      <div>
+                        <FormLabel>{t('Show Alipay in wallet')}</FormLabel>
+                        <FormDescription>
+                          {t(
+                            'Enable this switch to show Alipay as a wallet payment method.'
+                          )}
+                        </FormDescription>
+                      </div>
+                      <FormControl>
+                        <Switch
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                        />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+                <Alert>
+                  <AlertTitle>{t('Public callback required')}</AlertTitle>
+                  <AlertDescription>
+                    {t(
+                      'Set the callback address in the Epay tab to a public HTTPS origin. Alipay notifications use /api/alipay/notify.'
+                    )}
+                  </AlertDescription>
+                </Alert>
+                <div className='grid gap-6 md:grid-cols-2'>
+                  <FormField
+                    control={form.control}
+                    name='AlipayAppID'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>{t('Alipay application ID')}</FormLabel>
+                        <FormControl>
+                          <Input autoComplete='off' {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name='AlipayPrivateKey'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>{t('Application private key')}</FormLabel>
+                        <FormControl>
+                          <Textarea
+                            className='min-h-32 font-mono text-xs'
+                            placeholder={t('PEM encoded RSA private key')}
+                            autoComplete='off'
+                            {...field}
+                          />
+                        </FormControl>
+                        <FormDescription>
+                          {t('Leave blank unless rotating the private key')}
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+                <FormField
+                  control={form.control}
+                  name='AlipayPublicKey'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t('Alipay public key')}</FormLabel>
+                      <FormControl>
+                        <Textarea
+                          className='min-h-32 font-mono text-xs'
+                          placeholder={t('PEM encoded RSA public key')}
+                          autoComplete='off'
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        {t(
+                          'Use the Alipay public key issued by the platform, not the application public key.'
+                        )}
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+            </TabsContent>
+
+            <TabsContent
+              value='wechat-pay'
+              className={paymentTabContentClassName}
+            >
+              <div className='space-y-4'>
+                <div>
+                  <h3 className='text-lg font-medium'>
+                    {t('WeChat Pay official direct connection')}
+                  </h3>
+                  <p className='text-muted-foreground text-sm'>
+                    {t(
+                      'Connect directly to WeChat Pay API v3 using Native payment QR codes.'
+                    )}
+                  </p>
+                </div>
+                <FormField
+                  control={form.control}
+                  name='WeChatPayDirectEnabled'
+                  render={({ field }) => (
+                    <FormItem className='flex items-center justify-between rounded-lg border p-4'>
+                      <div>
+                        <FormLabel>{t('Show WeChat Pay in wallet')}</FormLabel>
+                        <FormDescription>
+                          {t(
+                            'Enable this switch to show WeChat Pay as a wallet payment method.'
+                          )}
+                        </FormDescription>
+                      </div>
+                      <FormControl>
+                        <Switch
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                        />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+                <Alert>
+                  <AlertTitle>{t('Public callback required')}</AlertTitle>
+                  <AlertDescription>
+                    {t(
+                      'Set the callback address in the Epay tab to a public HTTPS origin. WeChat Pay notifications use /api/wechat-pay/notify.'
+                    )}
+                  </AlertDescription>
+                </Alert>
+                <div className='grid gap-6 md:grid-cols-2'>
+                  {(
+                    [
+                      ['WeChatPayAppID', 'WeChat Pay AppID'],
+                      ['WeChatPayMchID', 'WeChat Pay merchant ID'],
+                      [
+                        'WeChatPayMchSerialNo',
+                        'Merchant certificate serial number',
+                      ],
+                      [
+                        'WeChatPayPlatformPublicKeyID',
+                        'Platform public key ID',
+                      ],
+                    ] as const
+                  ).map(([name, label]) => (
+                    <FormField
+                      key={name}
+                      control={form.control}
+                      name={name}
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>{t(label)}</FormLabel>
+                          <FormControl>
+                            <Input autoComplete='off' {...field} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  ))}
+                </div>
+                <FormField
+                  control={form.control}
+                  name='WeChatPayAPIv3Key'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t('API v3 key')}</FormLabel>
+                      <FormControl>
+                        <Input
+                          type='password'
+                          autoComplete='new-password'
+                          placeholder={t('Exactly 32 characters')}
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        {t('Leave blank unless rotating the API v3 key')}
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <div className='grid gap-6 md:grid-cols-2'>
+                  <FormField
+                    control={form.control}
+                    name='WeChatPayPrivateKey'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>{t('Merchant private key')}</FormLabel>
+                        <FormControl>
+                          <Textarea
+                            className='min-h-36 font-mono text-xs'
+                            placeholder={t('PEM encoded RSA private key')}
+                            autoComplete='off'
+                            {...field}
+                          />
+                        </FormControl>
+                        <FormDescription>
+                          {t('Leave blank unless rotating the private key')}
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name='WeChatPayPlatformPublicKey'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>{t('Platform public key')}</FormLabel>
+                        <FormControl>
+                          <Textarea
+                            className='min-h-36 font-mono text-xs'
+                            placeholder={t('PEM encoded RSA public key')}
+                            autoComplete='off'
+                            {...field}
+                          />
+                        </FormControl>
                         <FormMessage />
                       </FormItem>
                     )}

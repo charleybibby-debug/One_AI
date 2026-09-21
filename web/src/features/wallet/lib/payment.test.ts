@@ -21,6 +21,8 @@ import { describe, expect, test } from 'vitest'
 import { PAYMENT_TYPES } from '../constants'
 import {
   dispatchSelectedPayment,
+  getMinTopupAmount,
+  isOfficialPayment,
   isStripePayment,
   isWaffoPayment,
   isWaffoPancakePayment,
@@ -33,6 +35,29 @@ describe('payment type classification', () => {
     expect(isWaffoPancakePayment(PAYMENT_TYPES.WAFFO_PANCAKE)).toBe(true)
     expect(isWaffoPancakePayment(PAYMENT_TYPES.WAFFO)).toBe(false)
     expect(isStripePayment(PAYMENT_TYPES.STRIPE)).toBe(true)
+  })
+
+  test('routes only official Alipay and WeChat methods to direct APIs', () => {
+    expect(isOfficialPayment(PAYMENT_TYPES.ALIPAY_DIRECT)).toBe(true)
+    expect(isOfficialPayment(PAYMENT_TYPES.WECHAT_DIRECT)).toBe(true)
+    expect(isOfficialPayment(PAYMENT_TYPES.ALIPAY)).toBe(false)
+    expect(isOfficialPayment(PAYMENT_TYPES.WECHAT)).toBe(false)
+  })
+
+  test('uses the configured minimum for official direct payments', () => {
+    expect(
+      getMinTopupAmount({
+        enable_online_topup: false,
+        enable_stripe_topup: false,
+        enable_alipay_direct_topup: true,
+        enable_wechat_direct_topup: false,
+        min_topup: 12,
+        stripe_min_topup: 1,
+        pay_methods: [],
+        amount_options: [],
+        discount: {},
+      })
+    ).toBe(12)
   })
 })
 

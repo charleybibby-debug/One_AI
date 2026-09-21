@@ -29,6 +29,7 @@ import type {
   AmountResponse,
   PaymentResponse,
   StripePaymentResponse,
+  OfficialPaymentResponse,
   AffiliateCodeResponse,
   AffiliateTransferResponse,
   BillingHistoryResponse,
@@ -128,6 +129,19 @@ export async function requestStripePayment(
   request: PaymentRequest
 ): Promise<StripePaymentResponse> {
   const res = await api.post('/api/user/stripe/pay', request, {
+    skipBusinessError: true,
+  } as Record<string, unknown>)
+  return res.data
+}
+
+export async function requestOfficialPayment(
+  request: PaymentRequest
+): Promise<OfficialPaymentResponse> {
+  const endpoint =
+    request.payment_method === 'alipay_direct'
+      ? '/api/user/alipay/pay'
+      : '/api/user/wechat-pay/pay'
+  const res = await api.post(endpoint, request, {
     skipBusinessError: true,
   } as Record<string, unknown>)
   return res.data

@@ -219,6 +219,14 @@ func UpdateOption(c *gin.Context) {
 		}
 	}
 	switch option.Key {
+	case "AlipayDirectEnabled":
+		if option.Value == "true" && !isAlipayDirectConfigured() {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "无法启用支付宝官方支付，请先填入支付宝 App ID、应用私钥和支付宝公钥！",
+			})
+			return
+		}
 	case "GitHubOAuthEnabled":
 		if option.Value == "true" && common.GitHubClientId == "" {
 			c.JSON(http.StatusOK, gin.H{

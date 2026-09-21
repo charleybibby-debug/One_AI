@@ -32,6 +32,7 @@ import { TransferDialog } from './components/dialogs/transfer-dialog'
 import { RechargeFormCard } from './components/recharge-form-card'
 import { SubscriptionPlansCard } from './components/subscription-plans-card'
 import { WalletStatsCard } from './components/wallet-stats-card'
+import { WeChatPayDialog } from './components/wechat-pay-dialog'
 import { DEFAULT_DISCOUNT_RATE, PAYMENT_TYPES } from './constants'
 import {
   useTopupInfo,
@@ -96,6 +97,8 @@ export function Wallet(props: WalletProps) {
     processing,
     calculatePaymentAmount,
     processPayment,
+    wechatCodeUrl,
+    clearWechatCodeUrl,
   } = usePayment()
   const {
     affiliateLink,
@@ -364,6 +367,8 @@ export function Wallet(props: WalletProps) {
         discountRate={getDiscountRate()}
         usdExchangeRate={effectiveUsdExchangeRate}
       />
+
+      <WeChatPayDialog codeUrl={wechatCodeUrl} onClose={clearWechatCodeUrl} />
 
       <TransferDialog
         open={transferDialogOpen}

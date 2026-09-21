@@ -167,3 +167,53 @@ func TestEpayWebhookEnabledRequiresTopUpAndWebhookConfig(t *testing.T) {
 	operation_setting.PayMethods = nil
 	require.False(t, isEpayWebhookEnabled())
 }
+
+func TestOfficialPaymentVisibilityUsesExplicitSwitch(t *testing.T) {
+	confirmPaymentComplianceForTest(t)
+
+	originalAlipayEnabled := setting.AlipayDirectEnabled
+	originalAlipayAppID := setting.AlipayAppID
+	originalAlipayPrivateKey := setting.AlipayPrivateKey
+	originalAlipayPublicKey := setting.AlipayPublicKey
+	originalWechatEnabled := setting.WeChatPayDirectEnabled
+	originalWechatAppID := setting.WeChatPayAppID
+	originalWechatMchID := setting.WeChatPayMchID
+	originalWechatSerial := setting.WeChatPayMchSerialNo
+	originalWechatPrivateKey := setting.WeChatPayPrivateKey
+	originalWechatAPIv3Key := setting.WeChatPayAPIv3Key
+	originalWechatPublicKey := setting.WeChatPayPlatformPublicKey
+	t.Cleanup(func() {
+		setting.AlipayDirectEnabled = originalAlipayEnabled
+		setting.AlipayAppID = originalAlipayAppID
+		setting.AlipayPrivateKey = originalAlipayPrivateKey
+		setting.AlipayPublicKey = originalAlipayPublicKey
+		setting.WeChatPayDirectEnabled = originalWechatEnabled
+		setting.WeChatPayAppID = originalWechatAppID
+		setting.WeChatPayMchID = originalWechatMchID
+		setting.WeChatPayMchSerialNo = originalWechatSerial
+		setting.WeChatPayPrivateKey = originalWechatPrivateKey
+		setting.WeChatPayAPIv3Key = originalWechatAPIv3Key
+		setting.WeChatPayPlatformPublicKey = originalWechatPublicKey
+	})
+
+	setting.AlipayAppID = "app-id"
+	setting.AlipayPrivateKey = "private-key"
+	setting.AlipayPublicKey = "public-key"
+	setting.AlipayDirectEnabled = false
+	require.False(t, isAlipayDirectEnabled())
+	setting.AlipayDirectEnabled = true
+	require.True(t, isAlipayDirectEnabled())
+	require.True(t, isAlipayDirectConfigured())
+
+	setting.WeChatPayAppID = "app-id"
+	setting.WeChatPayMchID = "merchant-id"
+	setting.WeChatPayMchSerialNo = "serial"
+	setting.WeChatPayPrivateKey = "private-key"
+	setting.WeChatPayAPIv3Key = "12345678901234567890123456789012"
+	setting.WeChatPayPlatformPublicKey = "public-key"
+	setting.WeChatPayDirectEnabled = false
+	require.False(t, isWeChatPayDirectEnabled())
+	setting.WeChatPayDirectEnabled = true
+	require.True(t, isWeChatPayDirectEnabled())
+	require.True(t, isWeChatPayDirectConfigured())
+}

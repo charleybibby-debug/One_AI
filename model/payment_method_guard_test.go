@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -214,6 +215,44 @@ func TestRechargeEpayCreditsQuotaExactlyOnce(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, alreadyDone)
 	assert.Equal(t, 2*500000, getUserQuotaForPaymentGuardTest(t, user.Id))
+}
+
+func TestRechargeOfficialPaymentCreditsVerifiedAmountExactlyOnce(t *testing.T) {
+	truncateTables(t)
+
+	oldQuotaPerUnit := common.QuotaPerUnit
+	common.QuotaPerUnit = 500000
+	t.Cleanup(func() { common.QuotaPerUnit = oldQuotaPerUnit })
+
+	user := insertUserForPaymentGuardTest(t, 507, 0)
+	order := createEpayTestOrder(t, user.Id, "ALIPAYDIRECTONCE", PaymentProviderAlipayDirect, common.TopUpStatusPending)
+
+	alreadyDone, err := RechargeOfficialPayment(order.TradeNo, PaymentProviderAlipayDirect, decimal.NewFromInt(10), "127.0.0.1")
+	require.NoError(t, err)
+	assert.False(t, alreadyDone)
+	assert.Equal(t, 2*500000, getUserQuotaForPaymentGuardTest(t, user.Id))
+	assert.Equal(t, common.TopUpStatusSuccess, getTopUpStatusForPaymentGuardTest(t, order.TradeNo))
+
+	alreadyDone, err = RechargeOfficialPayment(order.TradeNo, PaymentProviderAlipayDirect, decimal.NewFromInt(10), "127.0.0.1")
+	require.NoError(t, err)
+	assert.True(t, alreadyDone)
+	assert.Equal(t, 2*500000, getUserQuotaForPaymentGuardTest(t, user.Id))
+}
+
+func TestRechargeOfficialPaymentRejectsAmountMismatch(t *testing.T) {
+	truncateTables(t)
+
+	oldQuotaPerUnit := common.QuotaPerUnit
+	common.QuotaPerUnit = 500000
+	t.Cleanup(func() { common.QuotaPerUnit = oldQuotaPerUnit })
+
+	user := insertUserForPaymentGuardTest(t, 508, 0)
+	order := createEpayTestOrder(t, user.Id, "WECHATDIRECTAMOUNT", PaymentProviderWechatDirect, common.TopUpStatusPending)
+
+	_, err := RechargeOfficialPayment(order.TradeNo, PaymentProviderWechatDirect, decimal.NewFromFloat(9.99), "127.0.0.1")
+	require.ErrorIs(t, err, ErrInvalidTopUpQuota)
+	assert.Zero(t, getUserQuotaForPaymentGuardTest(t, user.Id))
+	assert.Equal(t, common.TopUpStatusPending, getTopUpStatusForPaymentGuardTest(t, order.TradeNo))
 }
 
 func TestRechargeEpayKeepsRedisAndDatabaseCreditInSync(t *testing.T) {

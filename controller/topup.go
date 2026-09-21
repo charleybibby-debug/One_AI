@@ -26,9 +26,9 @@ func GetTopUpInfo(c *gin.Context) {
 	complianceConfirmed := operation_setting.IsPaymentComplianceConfirmed()
 
 	// 获取支付方式
-	payMethods := operation_setting.PayMethods
-	if !complianceConfirmed {
-		payMethods = []map[string]string{}
+	payMethods := []map[string]string{}
+	if complianceConfirmed && isEpayTopUpEnabled() {
+		payMethods = append(payMethods, operation_setting.PayMethods...)
 	}
 
 	// 如果启用了 Stripe 支付，添加到支付方法列表
@@ -51,6 +51,20 @@ func GetTopUpInfo(c *gin.Context) {
 			}
 			payMethods = append(payMethods, stripeMethod)
 		}
+	}
+	if isAlipayDirectEnabled() {
+		payMethods = append(payMethods, map[string]string{
+			"name": "支付宝官方支付",
+			"type": model.PaymentMethodAlipayDirect,
+			"icon": "SiAlipay",
+		})
+	}
+	if isWeChatPayDirectEnabled() {
+		payMethods = append(payMethods, map[string]string{
+			"name": "微信官方支付",
+			"type": model.PaymentMethodWechatDirect,
+			"icon": "SiWechat",
+		})
 	}
 
 	// Waffo Pancake is displayed above the standard Waffo gateway.
@@ -99,6 +113,8 @@ func GetTopUpInfo(c *gin.Context) {
 	data := gin.H{
 		"enable_online_topup":              isEpayTopUpEnabled(),
 		"enable_stripe_topup":              isStripeTopUpEnabled(),
+		"enable_alipay_direct_topup":       isAlipayDirectEnabled(),
+		"enable_wechat_direct_topup":       isWeChatPayDirectEnabled(),
 		"enable_creem_topup":               isCreemTopUpEnabled(),
 		"enable_waffo_topup":               enableWaffo,
 		"enable_waffo_pancake_topup":       enableWaffoPancake,

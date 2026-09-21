@@ -29,10 +29,12 @@ import {
   calculateWaffoPancakeAmount,
   requestPayment,
   requestStripePayment,
+  requestOfficialPayment,
   isApiSuccess,
 } from '../api'
 import {
   isStripePayment,
+  isOfficialPayment,
   isWaffoPayment,
   isWaffoPancakePayment,
   submitPaymentForm,
@@ -85,6 +87,7 @@ export function usePayment() {
   const [amount, setAmount] = useState<number>(0)
   const [calculating, setCalculating] = useState(false)
   const [processing, setProcessing] = useState(false)
+  const [wechatCodeUrl, setWechatCodeUrl] = useState('')
 
   // Calculate payment amount
   const calculatePaymentAmount = useCallback(
@@ -114,27 +117,53 @@ export function usePayment() {
         setProcessing(true)
 
         const isStripe = isStripePayment(paymentType)
+        const isOfficial = isOfficialPayment(paymentType)
         const amount = Math.floor(topupAmount)
 
-        const response = isStripe
-          ? await requestStripePayment({
-              amount,
-              payment_method: 'stripe',
-            })
-          : await requestPayment({
-              amount,
-              payment_method: paymentType,
-            })
+        let response
+        if (isOfficial) {
+          response = await requestOfficialPayment({
+            amount,
+            payment_method: paymentType,
+          })
+        } else if (isStripe) {
+          response = await requestStripePayment({
+            amount,
+            payment_method: 'stripe',
+          })
+        } else {
+          response = await requestPayment({
+            amount,
+            payment_method: paymentType,
+          })
+        }
 
         if (!isApiSuccess(response)) {
           handleServerError(response, i18next.t('Payment request failed'))
           return false
         }
 
+        const officialData = isOfficial
+          ? (response.data as
+              | { pay_link?: string; code_url?: string }
+              | undefined)
+          : undefined
+
         // Handle Stripe payment
         if (isStripe && response.data?.pay_link) {
           window.open(response.data.pay_link as string, '_blank')
           toast.success(i18next.t('Redirecting to payment page...'))
+          return true
+        }
+
+        if (officialData?.pay_link) {
+          window.open(officialData.pay_link, '_blank', 'noopener,noreferrer')
+          toast.success(i18next.t('Redirecting to payment page...'))
+          return true
+        }
+
+        if (officialData?.code_url) {
+          setWechatCodeUrl(officialData.code_url)
           return true
         }
 
@@ -165,6 +194,8 @@ export function usePayment() {
     processing,
     calculatePaymentAmount,
     processPayment,
+    wechatCodeUrl,
+    clearWechatCodeUrl: () => setWechatCodeUrl(''),
     setAmount,
   }
 }
