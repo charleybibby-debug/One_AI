@@ -40,6 +40,9 @@ import type {
   WaffoPaymentResponse,
   WaffoPancakePaymentRequest,
   WaffoPancakePaymentResponse,
+  ReferralOverviewResponse,
+  ReferralInviteesResponse,
+  ReferralRecordsResponse,
 } from './types'
 
 // ============================================================================
@@ -210,6 +213,35 @@ export async function transferAffiliateQuota(
   request: AffiliateTransferRequest
 ): Promise<AffiliateTransferResponse> {
   const res = await api.post('/api/user/aff_transfer', request)
+  return res.data
+}
+
+export async function getReferralOverview(): Promise<ReferralOverviewResponse> {
+  const res = await api.get('/api/user/referral/overview')
+  return res.data
+}
+
+export async function getReferralInvitees(
+  page: number,
+  pageSize: number
+): Promise<ReferralInviteesResponse> {
+  const params = new URLSearchParams({
+    page: page.toString(),
+    page_size: pageSize.toString(),
+  })
+  const res = await api.get(`/api/user/referral/invitees?${params.toString()}`)
+  return res.data
+}
+
+export async function getReferralRecords(
+  page: number,
+  pageSize: number
+): Promise<ReferralRecordsResponse> {
+  const params = new URLSearchParams({
+    page: page.toString(),
+    page_size: pageSize.toString(),
+  })
+  const res = await api.get(`/api/user/referral/records?${params.toString()}`)
   return res.data
 }
 

@@ -409,7 +409,8 @@ func GetUser(c *gin.Context) {
 }
 
 type TransferAffQuotaRequest struct {
-	Quota int `json:"quota" binding:"required"`
+	Quota     int    `json:"quota" binding:"required"`
+	RequestId string `json:"request_id"`
 }
 
 func TransferAffQuota(c *gin.Context) {
@@ -428,7 +429,7 @@ func TransferAffQuota(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	err = user.TransferAffQuotaToQuota(tran.Quota)
+	err = user.TransferAffQuotaToQuotaIdempotent(tran.Quota, tran.RequestId)
 	if err != nil {
 		common.ApiErrorI18n(c, i18n.MsgUserTransferFailed, map[string]any{"Error": err.Error()})
 		return

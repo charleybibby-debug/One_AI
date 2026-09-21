@@ -46,6 +46,9 @@ export type OfficialPaymentResponse = ApiResponse<{
 }>
 export type AffiliateCodeResponse = ApiResponse<string>
 export type AffiliateTransferResponse = ApiResponse
+export type ReferralOverviewResponse = ApiResponse<ReferralOverview>
+export type ReferralInviteesResponse = PaginatedApiResponse<ReferralInvitee>
+export type ReferralRecordsResponse = PaginatedApiResponse<ReferralRecord>
 export type CreemPaymentResponse = ApiResponse<{ checkout_url: string }>
 export type WaffoPaymentResponse = ApiResponse<
   { payment_url?: string } | string
@@ -225,6 +228,58 @@ export interface AmountRequest {
 export interface AffiliateTransferRequest {
   /** Quota amount to transfer */
   quota: number
+  /** Stable identifier used to make retries idempotent */
+  request_id?: string
+}
+
+export interface PaginatedApiResponse<T> extends ApiResponse<T[]> {
+  total: number
+}
+
+export interface ReferralTier {
+  min_invites: number
+  rate_bps: number
+}
+
+export interface ReferralConfig {
+  tiers: ReferralTier[]
+}
+
+export interface ReferralOverviewStats {
+  total_invites: number
+  effective_invites: number
+  invites_today: number
+  pending_reward_quota: number
+  total_reward_quota: number
+}
+
+export interface ReferralOverview {
+  code: string
+  config: ReferralConfig
+  overview: ReferralOverviewStats
+  current_tier: ReferralTier
+  current_tier_index: number
+  next_tier: ReferralTier | null
+}
+
+export interface ReferralInvitee {
+  invitee_id: number
+  invitee_name: string
+  effective: boolean
+  registered_at: number
+  last_paid_at: number
+  topup_quota: number
+  reward_quota: number
+}
+
+export interface ReferralRecord {
+  id: number
+  invitee_id: number
+  event_type: string
+  base_quota: number
+  rate_bps: number
+  reward_quota: number
+  created_at: number
 }
 
 /**

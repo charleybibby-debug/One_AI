@@ -16,85 +16,124 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import {
+  keepPreviousData,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
 import i18next from 'i18next'
-import { useState, useEffect, useCallback } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
-import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { getSelf } from '@/lib/api'
 import { handleServerError } from '@/lib/handle-server-error'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
-import { getAffiliateCode, transferAffiliateQuota } from '../api'
-import { generateAffiliateLink } from '../lib'
+import {
+  getReferralInvitees,
+  getReferralOverview,
+  getReferralRecords,
+  transferAffiliateQuota,
+} from '../api'
 
 // ============================================================================
 // Affiliate Hook
 // ============================================================================
 
+const PAGE_SIZE = 5
+const REFERRAL_QUERY_KEY = ['wallet', 'referral'] as const
+
+function getReferralLinks(code: string) {
+  if (!code || typeof window === 'undefined') {
+    return { affiliateLink: '', shortLink: '', qrLink: '' }
+  }
+  const origin = window.location.origin
+  return {
+    affiliateLink: `${origin}/sign-up?aff=${encodeURIComponent(code)}&src=direct`,
+    shortLink: `${origin}/r/${encodeURIComponent(code)}`,
+    qrLink: `${origin}/sign-up?aff=${encodeURIComponent(code)}&src=qr`,
+  }
+}
+
 export function useAffiliate() {
-  const [affiliateCode, setAffiliateCode] = useState<string>('')
-  const [affiliateLink, setAffiliateLink] = useState<string>('')
-  const [loading, setLoading] = useState(true)
+  const queryClient = useQueryClient()
+  const [inviteePage, setInviteePage] = useState(1)
+  const [recordPage, setRecordPage] = useState(1)
   const [transferring, setTransferring] = useState(false)
-  const { copyToClipboard } = useCopyToClipboard()
+  const transferRequestIdRef = useRef('')
 
-  // Fetch affiliate code
-  const fetchAffiliateCode = useCallback(async () => {
-    try {
-      setLoading(true)
-      const response = requireServerSuccess(await getAffiliateCode())
+  const overviewQuery = useQuery({
+    queryKey: [...REFERRAL_QUERY_KEY, 'overview'],
+    queryFn: async () => requireServerSuccess(await getReferralOverview()),
+  })
+  const inviteesQuery = useQuery({
+    queryKey: [...REFERRAL_QUERY_KEY, 'invitees', inviteePage],
+    queryFn: async () =>
+      requireServerSuccess(await getReferralInvitees(inviteePage, PAGE_SIZE)),
+    placeholderData: keepPreviousData,
+  })
+  const recordsQuery = useQuery({
+    queryKey: [...REFERRAL_QUERY_KEY, 'records', recordPage],
+    queryFn: async () =>
+      requireServerSuccess(await getReferralRecords(recordPage, PAGE_SIZE)),
+    placeholderData: keepPreviousData,
+  })
 
-      if (response.success && response.data) {
-        setAffiliateCode(response.data)
-        const link = generateAffiliateLink(response.data)
-        setAffiliateLink(link)
+  const overview = overviewQuery.data?.data ?? null
+  const links = getReferralLinks(overview?.code ?? '')
+
+  const transferQuota = useCallback(
+    async (quota: number): Promise<boolean> => {
+      if (!transferRequestIdRef.current) {
+        transferRequestIdRef.current = globalThis.crypto.randomUUID()
       }
-    } catch (error) {
-      handleServerError(error)
-    } finally {
-      setLoading(false)
-    }
-  }, [])
+      try {
+        setTransferring(true)
+        const response = await transferAffiliateQuota({
+          quota,
+          request_id: transferRequestIdRef.current,
+        })
+        if (!response.success) {
+          handleServerError(response, i18next.t('Transfer failed'))
+          return false
+        }
 
-  // Copy affiliate link
-  const copyAffiliateLink = useCallback(() => {
-    copyToClipboard(affiliateLink)
-  }, [affiliateLink, copyToClipboard])
-
-  // Transfer affiliate quota to balance
-  const transferQuota = useCallback(async (quota: number): Promise<boolean> => {
-    try {
-      setTransferring(true)
-      const response = await transferAffiliateQuota({ quota })
-
-      if (response.success) {
+        transferRequestIdRef.current = ''
         toast.success(response.message || i18next.t('Transfer successful'))
-        await getSelf()
+        await Promise.all([
+          getSelf(),
+          queryClient.invalidateQueries({ queryKey: REFERRAL_QUERY_KEY }),
+        ])
         return true
+      } catch (error) {
+        handleServerError(error, i18next.t('Transfer failed'))
+        return false
+      } finally {
+        setTransferring(false)
       }
+    },
+    [queryClient]
+  )
 
-      handleServerError(response, i18next.t('Transfer failed'))
-      return false
-    } catch (_error) {
-      handleServerError(_error, i18next.t('Transfer failed'))
-      return false
-    } finally {
-      setTransferring(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    fetchAffiliateCode()
-  }, [fetchAffiliateCode])
+  const refetch = useCallback(async () => {
+    await queryClient.invalidateQueries({ queryKey: REFERRAL_QUERY_KEY })
+  }, [queryClient])
 
   return {
-    affiliateCode,
-    affiliateLink,
-    loading,
+    affiliateCode: overview?.code ?? '',
+    ...links,
+    overview,
+    invitees: inviteesQuery.data?.data ?? [],
+    inviteeTotal: inviteesQuery.data?.total ?? 0,
+    inviteePage,
+    setInviteePage,
+    records: recordsQuery.data?.data ?? [],
+    recordTotal: recordsQuery.data?.total ?? 0,
+    recordPage,
+    setRecordPage,
+    loading: overviewQuery.isLoading,
     transferring,
-    copyAffiliateLink,
     transferQuota,
-    refetch: fetchAffiliateCode,
+    refetch,
   }
 }

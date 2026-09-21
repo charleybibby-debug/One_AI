@@ -16,12 +16,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Activity, BarChart3, WalletCards } from 'lucide-react'
+import { Activity, BarChart3, HandCoins, WalletCards } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { IconBadge, type IconBadgeTone } from '@/components/ui/icon-badge'
 import { Skeleton } from '@/components/ui/skeleton'
-import { formatQuota } from '@/lib/format'
+import { toIntlLocale } from '@/i18n/languages'
+import { formatNumber, formatQuota } from '@/lib/format'
 
 import type { UserWalletData } from '../types'
 
@@ -31,11 +32,12 @@ interface WalletStatsCardProps {
 }
 
 export function WalletStatsCard(props: WalletStatsCardProps) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   if (props.loading) {
     return (
-      <div className='grid grid-cols-3 divide-x rounded-lg border'>
-        {['balance', 'usage', 'requests'].map((key) => (
+      <div className='grid grid-cols-2 divide-x rounded-lg border sm:grid-cols-4'>
+        {['balance', 'referral', 'usage', 'requests'].map((key) => (
           <div key={key} className='min-w-0 px-2.5 py-2.5 sm:px-5 sm:py-4'>
             <Skeleton className='h-3.5 w-full' />
             <Skeleton className='mt-2 h-6 w-full sm:h-7' />
@@ -61,6 +63,13 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
       tone: 'success',
     },
     {
+      label: t('Pending referral balance'),
+      value: formatQuota(props.user?.aff_quota ?? 0),
+      description: t('Available to transfer'),
+      icon: HandCoins,
+      tone: 'chart-3',
+    },
+    {
       label: t('Total Usage'),
       value: formatQuota(props.user?.used_quota ?? 0),
       description: t('Total consumed quota'),
@@ -69,7 +78,7 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
     },
     {
       label: t('API Requests'),
-      value: (props.user?.request_count ?? 0).toLocaleString(),
+      value: formatNumber(props.user?.request_count ?? 0, locale),
       description: t('Total requests made'),
       icon: Activity,
       tone: 'chart-4',
@@ -77,7 +86,7 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
   ]
 
   return (
-    <div className='grid grid-cols-3 divide-x rounded-lg border'>
+    <div className='grid grid-cols-2 divide-x rounded-lg border sm:grid-cols-4'>
       {stats.map((item) => (
         <div key={item.label} className='min-w-0 px-2.5 py-2.5 sm:px-5 sm:py-4'>
           <div className='flex items-center gap-1.5 sm:gap-2.5'>
