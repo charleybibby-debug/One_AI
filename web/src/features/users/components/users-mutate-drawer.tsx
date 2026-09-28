@@ -83,6 +83,7 @@ import {
   updateUser,
   getUser,
   getGroups,
+  getChannelAccounts,
   getPermissionCatalog,
 } from '../api'
 import { BINDING_FIELDS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
@@ -123,6 +124,14 @@ export function UsersMutateDrawer({
   })
 
   const groups = groupsData?.data || []
+
+  const { data: channelAccounts = [] } = useQuery({
+    queryKey: ['channel-accounts'],
+    queryFn: async () =>
+      (await requireServerSuccess(await getChannelAccounts())).data || [],
+    enabled: currentUser?.role === ROLE.SUPER_ADMIN,
+    staleTime: 60 * 1000,
+  })
 
   // Permission catalog is owned by the backend; fetched once and reused.
   const { data: permissionCatalog = EMPTY_PERMISSION_CATALOG } = useQuery({
@@ -180,7 +189,8 @@ export function UsersMutateDrawer({
       const payload = transformFormDataToPayload(
         data,
         currentRow?.id,
-        permissionCatalog
+        permissionCatalog,
+        canEditAdminPermissions
       )
       const result = isUpdate
         ? await updateUser(payload as typeof payload & { id: number })
@@ -310,6 +320,119 @@ export function UsersMutateDrawer({
                       </FormItem>
                     )}
                   />
+                )}
+
+                {canEditAdminPermissions && selectedRole === ROLE.USER && (
+                  <div className='space-y-4 border-t pt-4'>
+                    <h3 className='text-sm font-medium'>
+                      {t('Account Hierarchy')}
+                    </h3>
+                    <FormField
+                      control={form.control}
+                      name='account_type'
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>{t('Account Type')}</FormLabel>
+                          <Select
+                            items={[
+                              {
+                                value: 'standard',
+                                label: t('Standard Account'),
+                              },
+                              { value: 'channel', label: t('Channel Account') },
+                            ]}
+                            onValueChange={(value) =>
+                              value !== null && field.onChange(value)
+                            }
+                            value={field.value ?? 'standard'}
+                          >
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue
+                                  placeholder={t('Select account type')}
+                                />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent alignItemWithTrigger={false}>
+                              <SelectGroup>
+                                <SelectItem value='standard'>
+                                  {t('Standard Account')}
+                                </SelectItem>
+                                <SelectItem value='channel'>
+                                  {t('Channel Account')}
+                                </SelectItem>
+                              </SelectGroup>
+                            </SelectContent>
+                          </Select>
+                          <FormDescription>
+                            {t(
+                              'Channel accounts are first-level accounts and cannot belong to another channel.'
+                            )}
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    {form.watch('account_type') !== 'channel' && (
+                      <FormField
+                        control={form.control}
+                        name='channel_owner_id'
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>{t('Parent Channel')}</FormLabel>
+                            <Select
+                              items={[
+                                {
+                                  value: '0',
+                                  label: t('Direct Platform Account'),
+                                },
+                                ...channelAccounts.map((account) => ({
+                                  value: String(account.id),
+                                  label: `${account.display_name || account.username} (#${account.id})`,
+                                })),
+                              ]}
+                              onValueChange={(value) =>
+                                value !== null &&
+                                field.onChange(Number.parseInt(value, 10))
+                              }
+                              value={String(field.value ?? 0)}
+                            >
+                              <FormControl>
+                                <SelectTrigger>
+                                  <SelectValue
+                                    placeholder={t('Select parent channel')}
+                                  />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent alignItemWithTrigger={false}>
+                                <SelectGroup>
+                                  <SelectItem value='0'>
+                                    {t('Direct Platform Account')}
+                                  </SelectItem>
+                                  {channelAccounts.map((account) => (
+                                    <SelectItem
+                                      key={account.id}
+                                      value={String(account.id)}
+                                    >
+                                      {account.display_name || account.username}{' '}
+                                      (#{account.id})
+                                    </SelectItem>
+                                  ))}
+                                </SelectGroup>
+                              </SelectContent>
+                            </Select>
+                            <FormDescription>
+                              {t(
+                                'Assign this standard account to one active channel account.'
+                              )}
+                            </FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    )}
+                  </div>
                 )}
 
                 <FormField

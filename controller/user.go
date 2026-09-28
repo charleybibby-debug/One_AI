@@ -408,6 +408,27 @@ func GetUser(c *gin.Context) {
 	return
 }
 
+func GetChannelAccounts(c *gin.Context) {
+	if c.GetInt("role") != common.RoleRootUser {
+		common.ApiErrorMsg(c, "只有超级管理员可以管理渠道归属")
+		return
+	}
+	var accounts []struct {
+		Id          int    `json:"id"`
+		Username    string `json:"username"`
+		DisplayName string `json:"display_name"`
+	}
+	if err := model.DB.Model(&model.User{}).
+		Select("id", "username", "display_name").
+		Where("account_type = ? AND role = ? AND status = ?", model.UserAccountTypeChannel, common.RoleCommonUser, common.UserStatusEnabled).
+		Order("id desc").
+		Find(&accounts).Error; err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, accounts)
+}
+
 type TransferAffQuotaRequest struct {
 	Quota     int    `json:"quota" binding:"required"`
 	RequestId string `json:"request_id"`
@@ -499,6 +520,8 @@ func buildSelfUserData(user *model.User) map[string]any {
 		"display_name":      user.DisplayName,
 		"has_password":      user.HasPassword,
 		"role":              user.Role,
+		"account_type":      user.AccountType,
+		"channel_owner_id":  user.ChannelOwnerId,
 		"status":            user.Status,
 		"email":             user.Email,
 		"github_id":         user.GitHubId,
@@ -678,9 +701,29 @@ func UpdateUser(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgUserNoPermissionHigherLevel)
 		return
 	}
+	if updatedUser.AccountType != "" && myRole != common.RoleRootUser {
+		common.ApiErrorMsg(c, "只有超级管理员可以管理渠道归属")
+		return
+	}
+	if updatedUser.AccountType == "" {
+		updatedUser.AccountType = originUser.AccountType
+		updatedUser.ChannelOwnerId = originUser.ChannelOwnerId
+	}
+	if updatedUser.AccountType == "" {
+		updatedUser.AccountType = model.UserAccountTypeStandard
+	}
+	if originUser.Role != common.RoleCommonUser && (updatedUser.AccountType != model.UserAccountTypeStandard || updatedUser.ChannelOwnerId != 0) {
+		common.ApiErrorMsg(c, "管理员账号不能设置为渠道账号或渠道客户")
+		return
+	}
 	updatePassword := updatedUser.Password != ""
 	authzTouched := false
 	if err := model.DB.Transaction(func(tx *gorm.DB) error {
+		if myRole == common.RoleRootUser {
+			if err := model.ValidateUserAccountHierarchy(tx, updatedUser.Id, updatedUser.AccountType, updatedUser.ChannelOwnerId); err != nil {
+				return err
+			}
+		}
 		if err := updatedUser.EditWithTx(tx, updatePassword); err != nil {
 			return err
 		}
@@ -989,15 +1032,31 @@ func CreateUser(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgUserCannotCreateHigherLevel)
 		return
 	}
+	if user.AccountType == "" {
+		user.AccountType = model.UserAccountTypeStandard
+	}
+	if user.Role != common.RoleCommonUser && (user.AccountType != model.UserAccountTypeStandard || user.ChannelOwnerId != 0) {
+		common.ApiErrorMsg(c, "管理员账号不能设置为渠道账号或渠道客户")
+		return
+	}
+	if (user.AccountType != model.UserAccountTypeStandard || user.ChannelOwnerId != 0) && myRole != common.RoleRootUser {
+		common.ApiErrorMsg(c, "只有超级管理员可以管理渠道归属")
+		return
+	}
 	// Even for admin users, we cannot fully trust them!
 	cleanUser := model.User{
-		Username:    user.Username,
-		Password:    user.Password,
-		DisplayName: user.DisplayName,
-		Role:        user.Role, // 保持管理员设置的角色
+		Username:       user.Username,
+		Password:       user.Password,
+		DisplayName:    user.DisplayName,
+		Role:           user.Role, // 保持管理员设置的角色
+		AccountType:    user.AccountType,
+		ChannelOwnerId: user.ChannelOwnerId,
 	}
 	authzTouched := false
 	if err := model.DB.Transaction(func(tx *gorm.DB) error {
+		if err := model.ValidateUserAccountHierarchy(tx, 0, cleanUser.AccountType, cleanUser.ChannelOwnerId); err != nil {
+			return err
+		}
 		if err := cleanUser.InsertWithTx(tx, 0); err != nil {
 			return err
 		}

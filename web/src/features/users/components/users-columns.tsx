@@ -236,6 +236,34 @@ export function useUsersColumns(): ColumnDef<User>[] {
         meta: { mobileOrder: 20 },
       },
       {
+        id: 'account_hierarchy',
+        header: t('Account Hierarchy'),
+        cell: ({ row }) => {
+          if (row.original.account_type === 'channel') {
+            return (
+              <span className='text-sm font-medium'>
+                {t('Channel Account')}
+              </span>
+            )
+          }
+          if ((row.original.channel_owner_id ?? 0) > 0) {
+            return (
+              <span className='text-muted-foreground text-sm'>
+                {t('Channel Customer')} · #{row.original.channel_owner_id}
+              </span>
+            )
+          }
+          return (
+            <span className='text-muted-foreground text-sm'>
+              {t('Standard Account')}
+            </span>
+          )
+        },
+        enableSorting: false,
+        size: 180,
+        meta: { mobileHidden: true },
+      },
+      {
         id: 'invite_info',
         header: t('Invite Info'),
         cell: ({ row }) => {

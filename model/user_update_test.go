@@ -2,15 +2,55 @@ package model
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/glebarez/sqlite"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
+
+type legacyHierarchyUser struct {
+	Id                   int            `gorm:"primaryKey"`
+	Username             string         `gorm:"unique;index"`
+	Password             string         `gorm:"not null;"`
+	DisplayName          string         `gorm:"index"`
+	Role                 int            `gorm:"type:int;default:1"`
+	Status               int            `gorm:"type:int;default:1"`
+	Email                string         `gorm:"index"`
+	GitHubId             string         `gorm:"column:github_id;index"`
+	DiscordId            string         `gorm:"column:discord_id;index"`
+	OidcId               string         `gorm:"column:oidc_id;index"`
+	WeChatId             string         `gorm:"column:wechat_id;index"`
+	TelegramId           string         `gorm:"column:telegram_id;index"`
+	AccessToken          *string        `gorm:"type:char(32);column:access_token;uniqueIndex"`
+	AccessTokenCreatedAt *int64         `gorm:"type:bigint;column:access_token_created_at"`
+	Quota                int            `gorm:"type:int;default:0"`
+	UsedQuota            int            `gorm:"type:int;default:0;column:used_quota"`
+	RequestCount         int            `gorm:"type:int;default:0;"`
+	Group                string         `gorm:"type:varchar(64);default:'default'"`
+	AffCode              string         `gorm:"type:varchar(32);column:aff_code;uniqueIndex"`
+	AffCount             int            `gorm:"type:int;default:0;column:aff_count"`
+	AffQuota             int            `gorm:"type:int;default:0;column:aff_quota"`
+	AffHistoryQuota      int            `gorm:"type:int;default:0;column:aff_history"`
+	InviterId            int            `gorm:"type:int;column:inviter_id;index"`
+	DeletedAt            gorm.DeletedAt `gorm:"index"`
+	LinuxDOId            string         `gorm:"column:linux_do_id;index"`
+	Setting              string         `gorm:"type:text;column:setting"`
+	Remark               string         `gorm:"type:varchar(255)"`
+	StripeCustomer       string         `gorm:"type:varchar(64);column:stripe_customer;index"`
+	CreatedAt            int64          `gorm:"autoCreateTime;column:created_at"`
+	LastLoginAt          int64          `gorm:"default:0;column:last_login_at"`
+	AuthVersion          int64          `gorm:"type:bigint;not null;default:1;column:auth_version"`
+}
 
 func setupUserUpdateTestState(t *testing.T) {
 	t.Helper()
@@ -142,6 +182,143 @@ func TestUsageAccountingSupportsSignedDirectAndBatchDeltas(t *testing.T) {
 	assert.Equal(t, 3, got.RequestCount)
 	require.NoError(t, DB.Select("used_quota").First(&gotChannel, channel.Id).Error)
 	assert.Equal(t, int64(1150), gotChannel.UsedQuota)
+}
+
+func TestUserAccountHierarchyOnlyAllowsDirectMembersOfActiveChannelAccounts(t *testing.T) {
+	setupUserUpdateTestState(t)
+	channel := User{
+		Username: "hierarchy-channel", Password: "unused", Role: common.RoleCommonUser,
+		Status: common.UserStatusEnabled, Group: "default", AffCode: "hierarchy-channel-aff", AccountType: UserAccountTypeChannel,
+	}
+	require.NoError(t, DB.Create(&channel).Error)
+
+	assert.NoError(t, ValidateUserAccountHierarchy(DB, 0, UserAccountTypeStandard, channel.Id))
+	assert.Error(t, ValidateUserAccountHierarchy(DB, channel.Id, UserAccountTypeStandard, channel.Id))
+	assert.Error(t, ValidateUserAccountHierarchy(DB, 0, UserAccountTypeChannel, channel.Id))
+
+	disabledChannel := User{
+		Username: "hierarchy-disabled-channel", Password: "unused", Role: common.RoleCommonUser,
+		Status: common.UserStatusDisabled, Group: "default", AffCode: "hierarchy-disabled-aff", AccountType: UserAccountTypeChannel,
+	}
+	require.NoError(t, DB.Create(&disabledChannel).Error)
+	assert.Error(t, ValidateUserAccountHierarchy(DB, 0, UserAccountTypeStandard, disabledChannel.Id))
+
+	admin := User{
+		Username: "hierarchy-admin", Password: "unused", Role: common.RoleAdminUser,
+		Status: common.UserStatusEnabled, Group: "default", AffCode: "hierarchy-admin-aff", AccountType: UserAccountTypeChannel,
+	}
+	require.NoError(t, DB.Create(&admin).Error)
+	assert.Error(t, ValidateUserAccountHierarchy(DB, 0, UserAccountTypeStandard, admin.Id))
+}
+
+func TestUserAccountHierarchyPreventsDemotingChannelWithAssignedUsers(t *testing.T) {
+	setupUserUpdateTestState(t)
+	channel := User{
+		Username: "hierarchy-demotion-channel", Password: "unused", Role: common.RoleCommonUser,
+		Status: common.UserStatusEnabled, Group: "default", AffCode: "hierarchy-demotion-aff", AccountType: UserAccountTypeChannel,
+	}
+	require.NoError(t, DB.Create(&channel).Error)
+	member := User{
+		Username: "hierarchy-member", Password: "unused", Role: common.RoleCommonUser,
+		Status: common.UserStatusEnabled, Group: "default", AffCode: "hierarchy-member-aff", AccountType: UserAccountTypeStandard,
+		ChannelOwnerId: channel.Id,
+	}
+	require.NoError(t, DB.Create(&member).Error)
+
+	assert.Error(t, ValidateUserAccountHierarchy(DB, channel.Id, UserAccountTypeStandard, 0))
+}
+
+func TestUserAccountHierarchyPreventsDeletingChannelWithAssignedUsers(t *testing.T) {
+	setupUserUpdateTestState(t)
+	channel := User{
+		Username: "hierarchy-delete-channel", Password: "unused", Role: common.RoleCommonUser,
+		Status: common.UserStatusEnabled, Group: "default", AffCode: "hierarchy-delete-channel-aff", AccountType: UserAccountTypeChannel,
+	}
+	require.NoError(t, DB.Create(&channel).Error)
+	member := User{
+		Username: "hierarchy-delete-member", Password: "unused", Role: common.RoleCommonUser,
+		Status: common.UserStatusEnabled, Group: "default", AffCode: "hierarchy-delete-member-aff", AccountType: UserAccountTypeStandard,
+		ChannelOwnerId: channel.Id,
+	}
+	require.NoError(t, DB.Create(&member).Error)
+
+	assert.Error(t, validateChannelAccountDeletion(DB, channel.Id))
+
+	require.NoError(t, DB.Model(&member).Update("channel_owner_id", 0).Error)
+	assert.NoError(t, validateChannelAccountDeletion(DB, channel.Id))
+}
+
+func TestUserAccountHierarchyMigrationPreservesLegacyUsers(t *testing.T) {
+	tests := []struct {
+		name string
+		dsn  string
+		open func(string) gorm.Dialector
+	}{
+		{
+			name: "sqlite",
+			dsn:  filepath.Join(t.TempDir(), "account-hierarchy.sqlite"),
+			open: sqlite.Open,
+		},
+		{
+			name: "mysql",
+			dsn:  strings.TrimSpace(os.Getenv("TEST_MYSQL_DSN")),
+			open: mysql.Open,
+		},
+		{
+			name: "postgres",
+			dsn:  strings.TrimSpace(os.Getenv("TEST_POSTGRES_DSN")),
+			open: func(dsn string) gorm.Dialector {
+				return postgres.New(postgres.Config{DSN: dsn, PreferSimpleProtocol: true})
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if test.dsn == "" {
+				t.Skip("database DSN is not configured")
+			}
+			db, err := gorm.Open(test.open(test.dsn), &gorm.Config{})
+			require.NoError(t, err)
+			sqlDB, err := db.DB()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = sqlDB.Close() })
+
+			versionQuery := "SELECT VERSION()"
+			if test.name == "sqlite" {
+				versionQuery = "SELECT sqlite_version()"
+			} else if test.name == "postgres" {
+				versionQuery = "SHOW server_version"
+			}
+			var version string
+			require.NoError(t, db.Raw(versionQuery).Scan(&version).Error)
+			t.Logf("database: %s %s", test.name, version)
+
+			const upgradeTable = "user_account_hierarchy_upgrade_test"
+			const freshTable = "user_account_hierarchy_fresh_test"
+			for _, table := range []string{upgradeTable, freshTable} {
+				require.NoError(t, db.Migrator().DropTable(table))
+				t.Cleanup(func() { _ = db.Migrator().DropTable(table) })
+			}
+
+			require.NoError(t, db.Table(upgradeTable).AutoMigrate(&legacyHierarchyUser{}))
+			legacy := legacyHierarchyUser{Id: 1, Username: "existing-user", Password: "hash", AffCode: "existing-aff"}
+			require.NoError(t, db.Table(upgradeTable).Create(&legacy).Error)
+			require.NoError(t, db.Table(upgradeTable).AutoMigrate(&User{}))
+			require.NoError(t, db.Table(upgradeTable).AutoMigrate(&User{}))
+
+			var migrated User
+			require.NoError(t, db.Table(upgradeTable).First(&migrated, legacy.Id).Error)
+			assert.Equal(t, UserAccountTypeStandard, migrated.AccountType)
+			assert.Zero(t, migrated.ChannelOwnerId)
+
+			require.NoError(t, db.Table(freshTable).AutoMigrate(&User{}))
+			require.NoError(t, db.Table(freshTable).AutoMigrate(&User{}))
+			fresh := User{Username: "fresh-user", Password: "hash", Status: common.UserStatusEnabled, Group: "default"}
+			require.NoError(t, db.Table(freshTable).Create(&fresh).Error)
+			assert.Equal(t, UserAccountTypeStandard, fresh.AccountType)
+			assert.Zero(t, fresh.ChannelOwnerId)
+		})
+	}
 }
 
 func TestUpdateUserAccessTokenOnlyUpdatesAccessToken(t *testing.T) {

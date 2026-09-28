@@ -23,6 +23,7 @@ import { requireServerSuccess } from '@/lib/server-error-message'
 
 import type {
   User,
+  ChannelAccount,
   GetUsersParams,
   GetUsersResponse,
   SearchUsersParams,
@@ -88,6 +89,13 @@ export async function searchUsers(
  */
 export async function getUser(id: number): Promise<ApiResponse<User>> {
   const res = await api.get(`/api/user/${id}`)
+  return res.data
+}
+
+export async function getChannelAccounts(): Promise<
+  ApiResponse<ChannelAccount[]>
+> {
+  const res = await api.get('/api/user/channel/accounts')
   return res.data
 }
 

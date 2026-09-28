@@ -34,6 +34,8 @@ export interface AuthUser {
   display_name?: string
   email?: string
   role: number
+  account_type?: 'standard' | 'channel'
+  channel_owner_id?: number
   status?: number
   group?: string
   quota?: number

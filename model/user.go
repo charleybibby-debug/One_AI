@@ -19,6 +19,11 @@ import (
 
 const UserNameMaxLength = 20
 
+const (
+	UserAccountTypeStandard = "standard"
+	UserAccountTypeChannel  = "channel"
+)
+
 var userSortColumns = map[string]string{
 	"id":            "id",
 	"username":      "username",
@@ -83,7 +88,9 @@ type User struct {
 	HasPassword          bool                       `json:"-" gorm:"-:all"`
 	OriginalPassword     string                     `json:"original_password" gorm:"-:all"` // this field is only for Password change verification, don't save it to database!
 	DisplayName          string                     `json:"display_name" gorm:"index" validate:"max=20"`
-	Role                 int                        `json:"role" gorm:"type:int;default:1"`   // admin, common
+	Role                 int                        `json:"role" gorm:"type:int;default:1"` // admin, common
+	AccountType          string                     `json:"account_type" gorm:"type:varchar(16);not null;default:'standard';index"`
+	ChannelOwnerId       int                        `json:"channel_owner_id" gorm:"type:int;not null;default:0;index"`
 	Status               int                        `json:"status" gorm:"type:int;default:1"` // enabled, disabled
 	Email                string                     `json:"email" gorm:"index" validate:"max=50"`
 	GitHubId             string                     `json:"github_id" gorm:"column:github_id;index"`
@@ -543,7 +550,7 @@ func GetSelfUserById(id int) (*User, error) {
 		HasPassword bool `gorm:"column:has_password"`
 	}
 	err := DB.Model(&User{}).Select([]string{
-		"id", "username", "display_name", "role", "status", "email",
+		"id", "username", "display_name", "role", "account_type", "channel_owner_id", "status", "email",
 		"github_id", "discord_id", "oidc_id", "wechat_id", "telegram_id",
 		"group", "quota", "used_quota", "request_count", "aff_code", "aff_count",
 		"aff_quota", "aff_history", "inviter_id", "linux_do_id", "setting",
@@ -599,6 +606,9 @@ func (user *User) TransferAffQuotaToQuota(quota int) error {
 }
 
 func (user *User) prepareForInsert(tx *gorm.DB) error {
+	if user.AccountType == "" {
+		user.AccountType = UserAccountTypeStandard
+	}
 	user.Email = NormalizeEmail(user.Email)
 	if err := ensureEmailAvailableWithTx(tx, user.Email, 0); err != nil {
 		return err
@@ -811,6 +821,8 @@ func (user *User) UpdateWithTx(tx *gorm.DB, updatePassword bool) error {
 	}
 	if err = tx.Model(&current).Omit(
 		"access_token",
+		"account_type",
+		"channel_owner_id",
 		"quota",
 		"used_quota",
 		"request_count",
@@ -860,6 +872,10 @@ func (user *User) EditWithTx(tx *gorm.DB, updatePassword bool) error {
 		"group":        newUser.Group,
 		"remark":       newUser.Remark,
 	}
+	if newUser.AccountType != "" {
+		updates["account_type"] = newUser.AccountType
+		updates["channel_owner_id"] = newUser.ChannelOwnerId
+	}
 	if updatePassword {
 		updates["password"] = newUser.Password
 	}
@@ -879,6 +895,48 @@ func (user *User) EditWithTx(tx *gorm.DB, updatePassword bool) error {
 		return err
 	}
 	return tx.First(user, user.Id).Error
+}
+
+func ValidateUserAccountHierarchy(tx *gorm.DB, userID int, accountType string, channelOwnerID int) error {
+	if accountType == "" {
+		accountType = UserAccountTypeStandard
+	}
+	switch accountType {
+	case UserAccountTypeStandard:
+		if channelOwnerID == 0 {
+			if userID > 0 {
+				var memberCount int64
+				if err := tx.Model(&User{}).Where("channel_owner_id = ?", userID).Count(&memberCount).Error; err != nil {
+					return err
+				}
+				if memberCount > 0 {
+					return errors.New("channel account with assigned users cannot be demoted")
+				}
+			}
+			return nil
+		}
+		if channelOwnerID < 0 || channelOwnerID == userID {
+			return errors.New("invalid channel account")
+		}
+		var owner User
+		if err := lockForUpdate(tx).Select("id", "role", "account_type", "channel_owner_id", "status").First(&owner, channelOwnerID).Error; err != nil {
+			return errors.New("channel account not found")
+		}
+		if owner.Role != common.RoleCommonUser || owner.AccountType != UserAccountTypeChannel || owner.ChannelOwnerId != 0 || owner.Status != common.UserStatusEnabled {
+			return errors.New("selected account is not an active channel account")
+		}
+		return nil
+	case UserAccountTypeChannel:
+		if channelOwnerID != 0 {
+			return errors.New("channel accounts cannot belong to another channel")
+		}
+		if userID == 0 {
+			return nil
+		}
+		return nil
+	default:
+		return errors.New("invalid account type")
+	}
 }
 
 func (user *User) ClearBinding(bindingType string) error {
@@ -947,6 +1005,9 @@ func (user *User) delete(identity *AuthSessionIdentity) error {
 				return ErrCannotDeleteRootUser
 			}
 		}
+		if err := validateChannelAccountDeletion(tx, user.Id); err != nil {
+			return err
+		}
 		var err error
 		nextAuthVersion, err = IncrementUserAuthVersionWithTx(tx, user.Id)
 		if err != nil {
@@ -972,6 +1033,9 @@ func (user *User) HardDelete() error {
 	var tokens []Token
 	var deletedAuthVersion int64
 	err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := validateChannelAccountDeletion(tx, user.Id); err != nil {
+			return err
+		}
 		var err error
 		deletedAuthVersion, err = IncrementUserAuthVersionWithTx(tx, user.Id)
 		if err != nil {
@@ -998,6 +1062,26 @@ func (user *User) HardDelete() error {
 	}
 	if err := invalidateUserCache(user.Id); err != nil {
 		common.SysError(fmt.Sprintf("failed to invalidate user cache after hard deleting user %d: %v", user.Id, err))
+	}
+	return nil
+}
+
+func validateChannelAccountDeletion(tx *gorm.DB, userID int) error {
+	var user struct {
+		AccountType string
+	}
+	if err := tx.Unscoped().Model(&User{}).Select("account_type").First(&user, userID).Error; err != nil {
+		return err
+	}
+	if user.AccountType != UserAccountTypeChannel {
+		return nil
+	}
+	var memberCount int64
+	if err := tx.Model(&User{}).Where("channel_owner_id = ?", userID).Count(&memberCount).Error; err != nil {
+		return err
+	}
+	if memberCount > 0 {
+		return errors.New("channel account with assigned users cannot be deleted")
 	}
 	return nil
 }

@@ -54,6 +54,8 @@ export const userSchema = z.object({
   linux_do_id: z.string().optional(),
   status: userStatusSchema,
   role: userRoleSchema,
+  account_type: z.enum(['standard', 'channel']).optional(),
+  channel_owner_id: z.number().optional(),
   created_at: z.number().optional(),
   updated_at: z.number().optional(),
   last_login_at: z.number().optional(),
@@ -122,10 +124,18 @@ export interface UserFormData {
   display_name: string
   password?: string
   role?: number // Only used when creating user
+  account_type?: 'standard' | 'channel'
+  channel_owner_id?: number
   quota?: number // Only used when updating user
   group?: string // Only used when updating user
   remark?: string // Only used when updating user
   admin_permissions?: AdminPermissionMatrix
+}
+
+export interface ChannelAccount {
+  id: number
+  username: string
+  display_name: string
 }
 
 export type ManageUserAction =

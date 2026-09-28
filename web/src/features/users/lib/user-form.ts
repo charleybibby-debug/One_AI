@@ -27,7 +27,7 @@ import { quotaUnitsToDollars } from '@/lib/format'
 import { ROLE } from '@/lib/roles'
 
 import { DEFAULT_GROUP } from '../constants'
-import { type UserFormData, type User } from '../types'
+import type { User, UserFormData } from '../types'
 
 // ============================================================================
 // Form Schema
@@ -38,6 +38,8 @@ export const userFormSchema = z.object({
   display_name: z.string().optional(),
   password: z.string().optional(),
   role: z.number().optional(),
+  account_type: z.enum(['standard', 'channel']).optional(),
+  channel_owner_id: z.number().int().nonnegative().optional(),
   quota_dollars: z.number().min(0).optional(),
   group: z.string().optional(),
   remark: z.string().optional(),
@@ -57,6 +59,8 @@ export const USER_FORM_DEFAULT_VALUES: UserFormValues = {
   display_name: '',
   password: '',
   role: 1, // Default to common user
+  account_type: 'standard',
+  channel_owner_id: 0,
   quota_dollars: 0,
   group: DEFAULT_GROUP,
   remark: '',
@@ -74,7 +78,8 @@ export const USER_FORM_DEFAULT_VALUES: UserFormValues = {
 export function transformFormDataToPayload(
   data: UserFormValues,
   userId?: number,
-  catalog?: PermissionCatalog
+  catalog?: PermissionCatalog,
+  includeAccountHierarchy = false
 ): UserFormData & { id?: number } {
   const payload: UserFormData & { id?: number } = {
     username: data.username,
@@ -83,6 +88,12 @@ export function transformFormDataToPayload(
   }
 
   const role = userId === undefined ? data.role || 1 : (data.role ?? 0)
+
+  if (includeAccountHierarchy && role === ROLE.USER) {
+    payload.account_type = data.account_type ?? 'standard'
+    payload.channel_owner_id =
+      payload.account_type === 'channel' ? 0 : (data.channel_owner_id ?? 0)
+  }
 
   // Only send the permission matrix when the target is an admin and the catalog
   // is available; without the catalog we cannot build a full matrix, so we omit
@@ -118,6 +129,8 @@ export function transformUserToFormDefaults(user: User): UserFormValues {
     display_name: user.display_name,
     password: '',
     role: user.role,
+    account_type: user.account_type ?? 'standard',
+    channel_owner_id: user.channel_owner_id ?? 0,
     quota_dollars: quotaUnitsToDollars(user.quota),
     group: user.group || DEFAULT_GROUP,
     remark: user.remark || '',
