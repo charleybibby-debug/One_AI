@@ -19,21 +19,25 @@ For commercial licensing, please contact support@quantumnous.com
 import { useTranslation } from 'react-i18next'
 
 import { SectionPageLayout } from '@/components/layout'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { UsersDeleteDialog } from './components/users-delete-dialog'
 import { UsersMutateDrawer } from './components/users-mutate-drawer'
 import { UsersPrimaryButtons } from './components/users-primary-buttons'
 import { UsersProvider, useUsers } from './components/users-provider'
 import { UsersTable } from './components/users-table'
+import { isChannelAccountManager } from './lib/channel-manager'
 
 function UsersContent() {
   const { t } = useTranslation()
-  const { open, setOpen, currentRow } = useUsers()
+  const { open, setOpen, currentRow, scope } = useUsers()
 
   return (
     <>
       <SectionPageLayout fixedContent>
-        <SectionPageLayout.Title>{t('Users')}</SectionPageLayout.Title>
+        <SectionPageLayout.Title>
+          {t(scope === 'channel' ? 'Channel Users' : 'Users')}
+        </SectionPageLayout.Title>
         <SectionPageLayout.Actions>
           <UsersPrimaryButtons />
         </SectionPageLayout.Actions>
@@ -53,8 +57,11 @@ function UsersContent() {
 }
 
 export function Users() {
+  const user = useAuthStore((state) => state.auth.user)
+  const scope = isChannelAccountManager(user) ? 'channel' : 'admin'
+
   return (
-    <UsersProvider>
+    <UsersProvider scope={scope}>
       <UsersContent />
     </UsersProvider>
   )

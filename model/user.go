@@ -33,6 +33,15 @@ var userSortColumns = map[string]string{
 	"last_login_at": "last_login_at",
 }
 
+var adminManagedUserListColumns = []string{
+	"id", "username", "display_name", "role", "account_type", "channel_owner_id",
+	"status", "quota", "used_quota", "request_count", "group", "remark",
+	"aff_count", "aff_history", "inviter_id", "created_at", "last_login_at", "deleted_at",
+}
+
+var adminManagedUserDetailColumns = append(append([]string(nil), adminManagedUserListColumns...),
+	"email", "github_id", "discord_id", "oidc_id", "wechat_id", "telegram_id", "linux_do_id")
+
 type UserSortOptions struct {
 	SortBy    string
 	SortOrder string
@@ -421,7 +430,15 @@ func GetMaxUserId() int {
 	return user.Id
 }
 
-func GetAllUsers(pageInfo *common.PageInfo, sortOptions ...UserSortOptions) (users []*User, total int64, err error) {
+func adminManageableUsersQuery(tx *gorm.DB, operatorRole int) *gorm.DB {
+	query := tx.Unscoped().Model(&User{})
+	if operatorRole != common.RoleRootUser {
+		query = query.Where("role < ?", operatorRole)
+	}
+	return query
+}
+
+func GetAllUsers(pageInfo *common.PageInfo, operatorRole int, sortOptions ...UserSortOptions) (users []*User, total int64, err error) {
 	// Start transaction
 	tx := DB.Begin()
 	if tx.Error != nil {
@@ -434,7 +451,8 @@ func GetAllUsers(pageInfo *common.PageInfo, sortOptions ...UserSortOptions) (use
 	}()
 
 	// Get total count within transaction
-	err = tx.Unscoped().Model(&User{}).Count(&total).Error
+	query := adminManageableUsersQuery(tx, operatorRole)
+	err = query.Count(&total).Error
 	if err != nil {
 		tx.Rollback()
 		return nil, 0, err
@@ -442,7 +460,7 @@ func GetAllUsers(pageInfo *common.PageInfo, sortOptions ...UserSortOptions) (use
 
 	// Get paginated users within same transaction
 	order := resolveUserSortOptions(sortOptions)
-	err = order.Apply(tx.Unscoped()).Limit(pageInfo.GetPageSize()).Offset(pageInfo.GetStartIdx()).Omit("password", "access_token").Find(&users).Error
+	err = order.Apply(query.Select(adminManagedUserListColumns)).Limit(pageInfo.GetPageSize()).Offset(pageInfo.GetStartIdx()).Find(&users).Error
 	if err != nil {
 		tx.Rollback()
 		return nil, 0, err
@@ -456,7 +474,7 @@ func GetAllUsers(pageInfo *common.PageInfo, sortOptions ...UserSortOptions) (use
 	return users, total, nil
 }
 
-func SearchUsers(keyword string, group string, role *int, status *int, startIdx int, num int, sortOptions ...UserSortOptions) ([]*User, int64, error) {
+func SearchUsers(keyword string, group string, role *int, status *int, startIdx int, num int, operatorRole int, sortOptions ...UserSortOptions) ([]*User, int64, error) {
 	var users []*User
 	var total int64
 	var err error
@@ -473,7 +491,7 @@ func SearchUsers(keyword string, group string, role *int, status *int, startIdx 
 	}()
 
 	// 构建基础查询
-	query := tx.Unscoped().Model(&User{})
+	query := adminManageableUsersQuery(tx, operatorRole)
 
 	// 构建搜索条件
 	likeCondition := "username LIKE ? OR email LIKE ? OR display_name LIKE ?"
@@ -511,7 +529,7 @@ func SearchUsers(keyword string, group string, role *int, status *int, startIdx 
 
 	// 获取分页数据
 	order := resolveUserSortOptions(sortOptions)
-	err = order.Apply(query.Omit("password", "access_token")).Limit(num).Offset(startIdx).Find(&users).Error
+	err = order.Apply(query.Select(adminManagedUserListColumns)).Limit(num).Offset(startIdx).Find(&users).Error
 	if err != nil {
 		tx.Rollback()
 		return nil, 0, err
@@ -523,6 +541,15 @@ func SearchUsers(keyword string, group string, role *int, status *int, startIdx 
 	}
 
 	return users, total, nil
+}
+
+func GetAdminManagedUserById(id int) (*User, error) {
+	if id == 0 {
+		return nil, errors.New("id 为空！")
+	}
+	var user User
+	err := DB.Select(adminManagedUserDetailColumns).First(&user, "id = ?", id).Error
+	return &user, err
 }
 
 func GetUserById(id int, selectAll bool) (*User, error) {
@@ -568,6 +595,38 @@ func GetUserIdByAffCode(affCode string) (int, error) {
 	var user User
 	err := DB.Select("id").First(&user, "aff_code = ?", affCode).Error
 	return user.Id, err
+}
+
+// ApplyRegistrationInvitation applies inviter and channel ownership metadata to
+// a new user. Channel ownership is granted only by an active top-level channel
+// account; ordinary and invalid channel inviters keep the existing referral
+// behavior without gaining management access to the new account.
+func ApplyRegistrationInvitation(tx *gorm.DB, user *User, affCode string) (int, error) {
+	if affCode == "" {
+		return 0, nil
+	}
+
+	var inviter User
+	err := lockForUpdate(tx).
+		Select("id", "role", "account_type", "channel_owner_id", "status", "group").
+		First(&inviter, "aff_code = ?", affCode).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+
+	user.InviterId = inviter.Id
+	if inviter.Role == common.RoleCommonUser &&
+		inviter.AccountType == UserAccountTypeChannel &&
+		inviter.ChannelOwnerId == 0 &&
+		inviter.Status == common.UserStatusEnabled {
+		user.AccountType = UserAccountTypeStandard
+		user.ChannelOwnerId = inviter.Id
+		user.Group = inviter.Group
+	}
+	return inviter.Id, nil
 }
 
 func DeleteUserById(id int) (err error) {

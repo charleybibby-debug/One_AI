@@ -47,6 +47,33 @@ func ResolveTaskModelAlias(g *jsplugin.RoutingGeneration, name string) (TaskAlia
 	return target, ok
 }
 
+type taskPricingPlugin struct {
+	plugin *jsplugin.LoadedPlugin
+	model  string
+}
+
+func taskPricingPlugins(g *jsplugin.RoutingGeneration, name string) []taskPricingPlugin {
+	if g == nil || name == "" {
+		return nil
+	}
+	if plugins := g.PluginsByModel(name); len(plugins) > 0 {
+		result := make([]taskPricingPlugin, 0, len(plugins))
+		for _, plugin := range plugins {
+			result = append(result, taskPricingPlugin{plugin: plugin, model: name})
+		}
+		return result
+	}
+	target, ok := ResolveTaskModelAlias(g, name)
+	if !ok || target.Declared == "" {
+		return nil
+	}
+	plugin, ok := g.Get(target.PluginKey)
+	if !ok {
+		return nil
+	}
+	return []taskPricingPlugin{{plugin: plugin, model: target.Declared}}
+}
+
 func loadFreshTaskAliasView(g *jsplugin.RoutingGeneration) *taskAliasView {
 	view := taskAliasViewPtr.Load()
 	if taskAliasViewFresh(view, g.Number) {
@@ -124,7 +151,7 @@ func buildTaskAliasView(generation *jsplugin.RoutingGeneration) *taskAliasView {
 			if _, exposed := inModels[alias]; !exposed {
 				continue
 			}
-			if _, declared := generation.CanonicalModel(alias); declared {
+			if _, declared := generation.GetByModel(alias); declared {
 				continue
 			}
 			tail, cyclic := followChannelModelMapping(modelMap, alias)

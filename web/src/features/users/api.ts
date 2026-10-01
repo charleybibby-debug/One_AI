@@ -21,6 +21,7 @@ import { api } from '@/lib/api'
 import type { CustomOAuthBinding } from '@/lib/oauth'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
+import type { UserManagementScope } from './components/users-provider'
 import type {
   User,
   ChannelAccount,
@@ -33,6 +34,8 @@ import type {
   ApiResponse,
 } from './types'
 
+const CHANNEL_USERS_BASE = '/api/user/channel/members'
+
 // ============================================================================
 // User Management APIs
 // ============================================================================
@@ -41,17 +44,21 @@ import type {
  * Get paginated users list
  */
 export async function getUsers(
-  params: GetUsersParams = {}
+  params: GetUsersParams = {},
+  scope: UserManagementScope = 'admin'
 ): Promise<GetUsersResponse> {
   const { p = 1, page_size = 10, sort_by, sort_order } = params
-  const res = await api.get('/api/user/', {
-    params: {
-      p,
-      page_size,
-      sort_by,
-      sort_order,
-    },
-  })
+  const res = await api.get(
+    scope === 'channel' ? CHANNEL_USERS_BASE : '/api/user/',
+    {
+      params: {
+        p,
+        page_size,
+        sort_by,
+        sort_order,
+      },
+    }
+  )
   return res.data
 }
 
@@ -59,7 +66,8 @@ export async function getUsers(
  * Search users by keyword or group
  */
 export async function searchUsers(
-  params: SearchUsersParams
+  params: SearchUsersParams,
+  scope: UserManagementScope = 'admin'
 ): Promise<GetUsersResponse> {
   const {
     keyword = '',
@@ -80,15 +88,22 @@ export async function searchUsers(
   queryParams.set('page_size', String(page_size))
   if (sort_by) queryParams.set('sort_by', sort_by)
   if (sort_order) queryParams.set('sort_order', sort_order)
-  const res = await api.get(`/api/user/search?${queryParams.toString()}`)
+  const path =
+    scope === 'channel' ? `${CHANNEL_USERS_BASE}/search` : '/api/user/search'
+  const res = await api.get(`${path}?${queryParams.toString()}`)
   return res.data
 }
 
 /**
  * Get single user by ID
  */
-export async function getUser(id: number): Promise<ApiResponse<User>> {
-  const res = await api.get(`/api/user/${id}`)
+export async function getUser(
+  id: number,
+  scope: UserManagementScope = 'admin'
+): Promise<ApiResponse<User>> {
+  const path =
+    scope === 'channel' ? `${CHANNEL_USERS_BASE}/${id}` : `/api/user/${id}`
+  const res = await api.get(path)
   return res.data
 }
 
@@ -103,9 +118,22 @@ export async function getChannelAccounts(): Promise<
  * Create a new user
  */
 export async function createUser(
-  data: UserFormData
+  data: UserFormData,
+  scope: UserManagementScope = 'admin'
 ): Promise<ApiResponse<User>> {
-  const res = await api.post('/api/user/', data)
+  const payload =
+    scope === 'channel'
+      ? {
+          username: data.username,
+          password: data.password,
+          display_name: data.display_name,
+          remark: data.remark,
+        }
+      : data
+  const res = await api.post(
+    scope === 'channel' ? CHANNEL_USERS_BASE : '/api/user/',
+    payload
+  )
   return res.data
 }
 
@@ -113,17 +141,29 @@ export async function createUser(
  * Update an existing user
  */
 export async function updateUser(
-  data: UserFormData & { id: number }
+  data: UserFormData & { id: number },
+  scope: UserManagementScope = 'admin'
 ): Promise<ApiResponse<Partial<User>>> {
-  const res = await api.put('/api/user/', data)
+  const path =
+    scope === 'channel' ? `${CHANNEL_USERS_BASE}/${data.id}` : '/api/user/'
+  const payload =
+    scope === 'channel'
+      ? { display_name: data.display_name, remark: data.remark }
+      : data
+  const res = await api.put(path, payload)
   return res.data
 }
 
 /**
  * Delete a single user (hard delete)
  */
-export async function deleteUser(id: number): Promise<ApiResponse> {
-  const res = await api.delete(`/api/user/${id}/`)
+export async function deleteUser(
+  id: number,
+  scope: UserManagementScope = 'admin'
+): Promise<ApiResponse> {
+  const path =
+    scope === 'channel' ? `${CHANNEL_USERS_BASE}/${id}` : `/api/user/${id}/`
+  const res = await api.delete(path)
   return res.data
 }
 
@@ -132,9 +172,12 @@ export async function deleteUser(id: number): Promise<ApiResponse> {
  */
 export async function manageUser(
   id: number,
-  action: ManageUserAction
+  action: ManageUserAction,
+  scope: UserManagementScope = 'admin'
 ): Promise<ApiResponse<Partial<User>>> {
-  const res = await api.post('/api/user/manage', { id, action })
+  const path =
+    scope === 'channel' ? `${CHANNEL_USERS_BASE}/manage` : '/api/user/manage'
+  const res = await api.post(path, { id, action })
   return res.data
 }
 

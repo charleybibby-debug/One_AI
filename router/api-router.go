@@ -148,6 +148,18 @@ func SetApiRouter(router *gin.Engine) {
 				selfRoute.DELETE("/oauth/bindings/:provider_id", controller.UnbindCustomOAuth)
 			}
 
+			channelUserRoute := userRoute.Group("/channel/members")
+			channelUserRoute.Use(middleware.DisableCache(), middleware.UserAuth())
+			{
+				channelUserRoute.GET("/", controller.GetChannelManagedUsers)
+				channelUserRoute.GET("/search", middleware.SearchRateLimit(), controller.GetChannelManagedUsers)
+				channelUserRoute.GET("/:id", controller.GetChannelManagedUser)
+				channelUserRoute.POST("/", middleware.CriticalRateLimit(), middleware.UserCriticalRateLimit("channel-user-manage"), controller.CreateChannelManagedUser)
+				channelUserRoute.PUT("/:id", middleware.CriticalRateLimit(), middleware.UserCriticalRateLimit("channel-user-manage"), controller.UpdateChannelManagedUser)
+				channelUserRoute.POST("/manage", middleware.CriticalRateLimit(), middleware.UserCriticalRateLimit("channel-user-manage"), controller.ManageChannelManagedUser)
+				channelUserRoute.DELETE("/:id", middleware.CriticalRateLimit(), middleware.UserCriticalRateLimit("channel-user-manage"), controller.DeleteChannelManagedUser)
+			}
+
 			adminRoute := userRoute.Group("/")
 			adminRoute.Use(middleware.AdminAuth())
 			{

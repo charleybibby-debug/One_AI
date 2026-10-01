@@ -111,7 +111,7 @@ export function UsersMutateDrawer({
 }: UsersMutateDrawerProps) {
   const { t } = useTranslation()
   const isUpdate = !!currentRow
-  const { triggerRefresh } = useUsers()
+  const { triggerRefresh, scope } = useUsers()
   const currentUser = useAuthStore((s) => s.auth.user)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [quotaDialogOpen, setQuotaDialogOpen] = useState(false)
@@ -121,6 +121,7 @@ export function UsersMutateDrawer({
     queryKey: ['groups'],
     queryFn: async () => requireServerSuccess(await getGroups()),
     staleTime: 5 * 60 * 1000,
+    enabled: scope === 'admin',
   })
 
   const groups = groupsData?.data || []
@@ -138,6 +139,7 @@ export function UsersMutateDrawer({
     queryKey: ['admin-permission-catalog'],
     queryFn: async () => requireServerSuccess(await getPermissionCatalog()),
     staleTime: 5 * 60 * 1000,
+    enabled: scope === 'admin',
   })
 
   const form = useForm<UserFormValues>({
@@ -149,7 +151,7 @@ export function UsersMutateDrawer({
   useEffect(() => {
     if (open && isUpdate && currentRow) {
       // For update, fetch fresh data
-      getUser(currentRow.id)
+      getUser(currentRow.id, scope)
         .then((result) => {
           if (result.success && result.data) {
             form.reset(transformUserToFormDefaults(result.data))
@@ -162,7 +164,7 @@ export function UsersMutateDrawer({
       // For create, reset to defaults
       form.reset(USER_FORM_DEFAULT_VALUES)
     }
-  }, [open, isUpdate, currentRow, form, t])
+  }, [open, isUpdate, currentRow, form, t, scope])
 
   const { meta: currencyMeta } = getCurrencyDisplay()
   const currencyLabel = getCurrencyLabel()
@@ -193,8 +195,8 @@ export function UsersMutateDrawer({
         canEditAdminPermissions
       )
       const result = isUpdate
-        ? await updateUser(payload as typeof payload & { id: number })
-        : await createUser(payload)
+        ? await updateUser(payload as typeof payload & { id: number }, scope)
+        : await createUser(payload, scope)
 
       if (result.success) {
         toast.success(
@@ -217,7 +219,7 @@ export function UsersMutateDrawer({
   const refreshUserData = async () => {
     if (!currentRow) return
     try {
-      const result = requireServerSuccess(await getUser(currentRow.id))
+      const result = requireServerSuccess(await getUser(currentRow.id, scope))
       if (result.success && result.data) {
         form.reset(transformUserToFormDefaults(result.data))
       }
@@ -281,7 +283,7 @@ export function UsersMutateDrawer({
                   )}
                 />
 
-                {!isUpdate && (
+                {!isUpdate && scope === 'admin' && (
                   <FormField
                     control={form.control}
                     name='role'
@@ -455,95 +457,105 @@ export function UsersMutateDrawer({
                   )}
                 />
 
-                <FormField
-                  control={form.control}
-                  name='password'
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>{t('Password')}</FormLabel>
-                      <FormControl>
-                        <Input
-                          {...field}
-                          type='password'
-                          placeholder={
-                            isUpdate
-                              ? t('Leave empty to keep unchanged')
-                              : t('Enter password (8–128 characters)')
-                          }
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </SideDrawerSection>
-
-              {/* Group & Quota Settings (Update only) */}
-              {isUpdate && (
-                <SideDrawerSection>
-                  <h3 className='text-sm font-medium'>{t('Group & Quota')}</h3>
-
+                {(!isUpdate || scope === 'admin') && (
                   <FormField
                     control={form.control}
-                    name='group'
+                    name='password'
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>{t('Group')}</FormLabel>
+                        <FormLabel>{t('Password')}</FormLabel>
                         <FormControl>
-                          <Combobox
-                            options={groups.map((group) => ({
-                              value: group,
-                              label: group,
-                            }))}
-                            onValueChange={field.onChange}
-                            value={field.value}
-                            className='w-full'
-                            placeholder={t('Select a group')}
+                          <Input
+                            {...field}
+                            type='password'
+                            placeholder={
+                              isUpdate
+                                ? t('Leave empty to keep unchanged')
+                                : t('Enter password (8–128 characters)')
+                            }
                           />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
                     )}
                   />
+                )}
+              </SideDrawerSection>
 
-                  <FormField
-                    control={form.control}
-                    name='quota_dollars'
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>
-                          {t('Remaining Quota ({{currency}})', {
-                            currency: currencyLabel,
-                          })}
-                        </FormLabel>
-                        <div className='flex gap-2'>
+              {/* Group & Quota Settings (Update only) */}
+              {isUpdate && (
+                <SideDrawerSection>
+                  <h3 className='text-sm font-medium'>
+                    {t(scope === 'channel' ? 'Remark' : 'Group & Quota')}
+                  </h3>
+
+                  {scope === 'admin' && (
+                    <FormField
+                      control={form.control}
+                      name='group'
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>{t('Group')}</FormLabel>
                           <FormControl>
-                            <Input
-                              value={
-                                tokensOnly
-                                  ? String(field.value || 0)
-                                  : (field.value || 0).toFixed(6)
-                              }
-                              readOnly
-                              className='flex-1'
+                            <Combobox
+                              options={groups.map((group) => ({
+                                value: group,
+                                label: group,
+                              }))}
+                              onValueChange={field.onChange}
+                              value={field.value}
+                              className='w-full'
+                              placeholder={t('Select a group')}
                             />
                           </FormControl>
-                          <Button
-                            type='button'
-                            variant='outline'
-                            onClick={() => setQuotaDialogOpen(true)}
-                          >
-                            <Pencil className='mr-1 h-4 w-4' />
-                            {t('Adjust Quota')}
-                          </Button>
-                        </div>
-                        <FormDescription>
-                          {formatQuota(parseQuotaFromDollars(field.value || 0))}
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  )}
+
+                  {scope === 'admin' && (
+                    <FormField
+                      control={form.control}
+                      name='quota_dollars'
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>
+                            {t('Remaining Quota ({{currency}})', {
+                              currency: currencyLabel,
+                            })}
+                          </FormLabel>
+                          <div className='flex gap-2'>
+                            <FormControl>
+                              <Input
+                                value={
+                                  tokensOnly
+                                    ? String(field.value || 0)
+                                    : (field.value || 0).toFixed(6)
+                                }
+                                readOnly
+                                className='flex-1'
+                              />
+                            </FormControl>
+                            <Button
+                              type='button'
+                              variant='outline'
+                              onClick={() => setQuotaDialogOpen(true)}
+                            >
+                              <Pencil className='mr-1 h-4 w-4' />
+                              {t('Adjust Quota')}
+                            </Button>
+                          </div>
+                          <FormDescription>
+                            {formatQuota(
+                              parseQuotaFromDollars(field.value || 0)
+                            )}
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  )}
 
                   <FormField
                     control={form.control}
@@ -555,7 +567,9 @@ export function UsersMutateDrawer({
                           <Textarea
                             {...field}
                             placeholder={t(
-                              'Admin notes (only visible to admins)'
+                              scope === 'channel'
+                                ? 'Notes visible to the channel account and platform administrators'
+                                : 'Admin notes (only visible to admins)'
                             )}
                             rows={3}
                           />
@@ -659,7 +673,7 @@ export function UsersMutateDrawer({
                 )}
 
               {/* Binding Information (Read-only) */}
-              {isUpdate && (
+              {isUpdate && scope === 'admin' && (
                 <SideDrawerSection>
                   <h3 className='text-sm font-medium'>
                     {t('Binding Information')}
@@ -702,7 +716,7 @@ export function UsersMutateDrawer({
       </Sheet>
 
       {/* Adjust Quota Dialog */}
-      {currentRow && (
+      {currentRow && scope === 'admin' && (
         <UserQuotaDialog
           open={quotaDialogOpen}
           onOpenChange={setQuotaDialogOpen}

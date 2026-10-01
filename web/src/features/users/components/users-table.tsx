@@ -61,8 +61,8 @@ function isDisabledUserRow(user: User) {
 
 export function UsersTable() {
   const { t } = useTranslation()
-  const columns = useUsersColumns()
-  const { refreshTrigger } = useUsers()
+  const { refreshTrigger, scope } = useUsers()
+  const columns = useUsersColumns(scope)
   const isMobile = useMediaQuery('(max-width: 640px)')
   const [sorting, setSorting] = useState<SortingState>([])
 
@@ -144,14 +144,17 @@ export function UsersTable() {
 
       const result =
         hasFilter || hasColumnFilter
-          ? await searchUsers({
-              ...params,
-              keyword: globalFilter,
-              status: statusFilter[0] ?? '',
-              role: roleFilter[0] ?? '',
-              group: groupFilter,
-            })
-          : await getUsers(params)
+          ? await searchUsers(
+              {
+                ...params,
+                keyword: globalFilter,
+                status: statusFilter[0] ?? '',
+                role: roleFilter[0] ?? '',
+                group: groupFilter,
+              },
+              scope
+            )
+          : await getUsers(params, scope)
 
       if (!result.success) {
         throw createServerError(
@@ -215,7 +218,11 @@ export function UsersTable() {
       skeletonKeyPrefix='users-skeleton'
       applyHeaderSize
       toolbarProps={{
-        searchPlaceholder: t('Filter by username, name or email...'),
+        searchPlaceholder: t(
+          scope === 'channel'
+            ? 'Filter by username'
+            : 'Filter by username, name or email...'
+        ),
         searchDebounceMs: 500,
         filters: [
           {
@@ -230,13 +237,15 @@ export function UsersTable() {
             options: getUserRoleOptions(t),
             singleSelect: true,
           },
-        ],
+        ].filter((filter) => scope === 'admin' || filter.columnId !== 'role'),
       }}
       getRowClassName={(row, { isMobile }) => {
         if (!isDisabledUserRow(row.original)) return undefined
         return isMobile ? DISABLED_ROW_MOBILE : DISABLED_ROW_DESKTOP
       }}
-      bulkActions={<DataTableBulkActions table={table} />}
+      bulkActions={
+        scope === 'admin' ? <DataTableBulkActions table={table} /> : undefined
+      }
     />
   )
 }

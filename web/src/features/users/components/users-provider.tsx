@@ -20,7 +20,9 @@ import React, { useState } from 'react'
 
 import useDialogState from '@/hooks/use-dialog'
 
-import { type User, type UsersDialogType } from '../types'
+import type { User, UsersDialogType } from '../types'
+
+export type UserManagementScope = 'admin' | 'channel'
 
 type UsersContextType = {
   open: UsersDialogType | null
@@ -29,11 +31,18 @@ type UsersContextType = {
   setCurrentRow: React.Dispatch<React.SetStateAction<User | null>>
   refreshTrigger: number
   triggerRefresh: () => void
+  scope: UserManagementScope
 }
 
 const UsersContext = React.createContext<UsersContextType | null>(null)
 
-export function UsersProvider({ children }: { children: React.ReactNode }) {
+export function UsersProvider({
+  children,
+  scope = 'admin',
+}: {
+  children: React.ReactNode
+  scope?: UserManagementScope
+}) {
   const [open, setOpen] = useDialogState<UsersDialogType>(null)
   const [currentRow, setCurrentRow] = useState<User | null>(null)
   const [refreshTrigger, setRefreshTrigger] = useState(0)
@@ -49,6 +58,7 @@ export function UsersProvider({ children }: { children: React.ReactNode }) {
         setCurrentRow,
         refreshTrigger,
         triggerRefresh,
+        scope,
       }}
     >
       {children}

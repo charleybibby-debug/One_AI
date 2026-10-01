@@ -68,7 +68,7 @@ interface DataTableRowActionsProps {
 export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const { t } = useTranslation()
   const user = row.original
-  const { setOpen, setCurrentRow, triggerRefresh } = useUsers()
+  const { setOpen, setCurrentRow, triggerRefresh, scope } = useUsers()
   const [resetPasskeyOpen, setResetPasskeyOpen] = useState(false)
   const [resetTwoFAOpen, setResetTwoFAOpen] = useState(false)
   const [bindingDialogOpen, setBindingDialogOpen] = useState(false)
@@ -86,7 +86,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
 
   const handleManage = async (action: Exclude<ManageUserAction, 'delete'>) => {
     try {
-      const result = await manageUser(user.id, action)
+      const result = await manageUser(user.id, action, scope)
       if (result.success) {
         toast.success(t(getUserActionMessage(action)))
         triggerRefresh()
@@ -179,7 +179,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
           </DropdownMenuItem>
         )}
 
-        {isAdmin && !isRoot && (
+        {scope === 'admin' && isAdmin && !isRoot && (
           <DropdownMenuItem onClick={() => handleManage('demote')}>
             {t('Demote')}
             <DropdownMenuShortcut>
@@ -188,7 +188,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
           </DropdownMenuItem>
         )}
 
-        {!isAdmin && (
+        {scope === 'admin' && !isAdmin && (
           <DropdownMenuItem onClick={() => handleManage('promote')}>
             {t('Promote')}
             <DropdownMenuShortcut>
@@ -197,57 +197,65 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
           </DropdownMenuItem>
         )}
 
-        <DropdownMenuItem
-          onSelect={(event) => {
-            event.preventDefault()
-            setBindingDialogOpen(true)
-          }}
-        >
-          {t('Manage Bindings')}
-          <DropdownMenuShortcut>
-            <Link2 size={16} />
-          </DropdownMenuShortcut>
-        </DropdownMenuItem>
+        {scope === 'admin' && (
+          <DropdownMenuItem
+            onSelect={(event) => {
+              event.preventDefault()
+              setBindingDialogOpen(true)
+            }}
+          >
+            {t('Manage Bindings')}
+            <DropdownMenuShortcut>
+              <Link2 size={16} />
+            </DropdownMenuShortcut>
+          </DropdownMenuItem>
+        )}
 
-        <DropdownMenuItem
-          onSelect={(event) => {
-            event.preventDefault()
-            setSubscriptionsDialogOpen(true)
-          }}
-        >
-          {t('Manage Subscriptions')}
-          <DropdownMenuShortcut>
-            <CreditCard size={16} />
-          </DropdownMenuShortcut>
-        </DropdownMenuItem>
+        {scope === 'admin' && (
+          <DropdownMenuItem
+            onSelect={(event) => {
+              event.preventDefault()
+              setSubscriptionsDialogOpen(true)
+            }}
+          >
+            {t('Manage Subscriptions')}
+            <DropdownMenuShortcut>
+              <CreditCard size={16} />
+            </DropdownMenuShortcut>
+          </DropdownMenuItem>
+        )}
 
-        <DropdownMenuSeparator />
+        {scope === 'admin' && <DropdownMenuSeparator />}
 
-        <DropdownMenuItem
-          onSelect={(event) => {
-            event.preventDefault()
-            setResetPasskeyOpen(true)
-          }}
-          disabled={isRoot}
-        >
-          {t('Reset Passkey')}
-          <DropdownMenuShortcut>
-            <KeyRound size={16} />
-          </DropdownMenuShortcut>
-        </DropdownMenuItem>
+        {scope === 'admin' && (
+          <DropdownMenuItem
+            onSelect={(event) => {
+              event.preventDefault()
+              setResetPasskeyOpen(true)
+            }}
+            disabled={isRoot}
+          >
+            {t('Reset Passkey')}
+            <DropdownMenuShortcut>
+              <KeyRound size={16} />
+            </DropdownMenuShortcut>
+          </DropdownMenuItem>
+        )}
 
-        <DropdownMenuItem
-          onSelect={(event) => {
-            event.preventDefault()
-            setResetTwoFAOpen(true)
-          }}
-          disabled={isRoot}
-        >
-          {t('Reset 2FA')}
-          <DropdownMenuShortcut>
-            <ShieldAlert size={16} />
-          </DropdownMenuShortcut>
-        </DropdownMenuItem>
+        {scope === 'admin' && (
+          <DropdownMenuItem
+            onSelect={(event) => {
+              event.preventDefault()
+              setResetTwoFAOpen(true)
+            }}
+            disabled={isRoot}
+          >
+            {t('Reset 2FA')}
+            <DropdownMenuShortcut>
+              <ShieldAlert size={16} />
+            </DropdownMenuShortcut>
+          </DropdownMenuItem>
+        )}
 
         <DropdownMenuSeparator />
 
@@ -287,19 +295,22 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         handleConfirm={handleResetTwoFA}
       />
 
-      <UserBindingDialog
-        open={bindingDialogOpen}
-        onOpenChange={setBindingDialogOpen}
-        userId={user.id}
-        onUnbindSuccess={triggerRefresh}
-      />
-
-      <UserSubscriptionsDialog
-        open={subscriptionsDialogOpen}
-        onOpenChange={setSubscriptionsDialogOpen}
-        user={{ id: user.id, username: user.username }}
-        onSuccess={triggerRefresh}
-      />
+      {scope === 'admin' && (
+        <>
+          <UserBindingDialog
+            open={bindingDialogOpen}
+            onOpenChange={setBindingDialogOpen}
+            userId={user.id}
+            onUnbindSuccess={triggerRefresh}
+          />
+          <UserSubscriptionsDialog
+            open={subscriptionsDialogOpen}
+            onOpenChange={setSubscriptionsDialogOpen}
+            user={{ id: user.id, username: user.username }}
+            onSuccess={triggerRefresh}
+          />
+        </>
+      )}
     </div>
   )
 }

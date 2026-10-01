@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -14,9 +15,11 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/oauth"
 	"github.com/QuantumNous/new-api/service/authz"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/go-redis/redis/v8"
@@ -91,6 +94,216 @@ func performManageUserRequest(t *testing.T, body string) *httptest.ResponseRecor
 	c.Set(common.RequestIdKey, "quota-test-request")
 	ManageUser(c)
 	return recorder
+}
+
+func performAdminUserReadRequest(t *testing.T, role int, method, path string, handler gin.HandlerFunc, targetID ...int) *httptest.ResponseRecorder {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(method, path, nil)
+	c.Set("id", 9999)
+	c.Set("role", role)
+	c.Set("username", "user-read-operator")
+	if len(targetID) > 0 {
+		c.Params = gin.Params{{Key: "id", Value: strconv.Itoa(targetID[0])}}
+	}
+	handler(c)
+	return recorder
+}
+
+func performChannelUserRequest(t *testing.T, manager model.User, method, path, body string, handler gin.HandlerFunc, targetID ...int) *httptest.ResponseRecorder {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(method, path, strings.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set("id", manager.Id)
+	c.Set("role", manager.Role)
+	c.Set("username", manager.Username)
+	c.Set(common.RequestIdKey, "channel-user-test-request")
+	if len(targetID) > 0 {
+		c.Params = gin.Params{{Key: "id", Value: strconv.Itoa(targetID[0])}}
+	}
+	handler(c)
+	return recorder
+}
+
+func createChannelManager(t *testing.T, db *gorm.DB, username, group string) model.User {
+	t.Helper()
+	manager := model.User{
+		Username: username, Role: common.RoleCommonUser, Status: common.UserStatusEnabled,
+		Group: group, AccountType: model.UserAccountTypeChannel, AuthVersion: 1, AffCode: username + "-aff",
+	}
+	require.NoError(t, db.Create(&manager).Error)
+	return manager
+}
+
+func createChannelChild(t *testing.T, db *gorm.DB, manager model.User, username string) model.User {
+	t.Helper()
+	accessToken := username + "-token"
+	child := model.User{
+		Username: username, Password: "stored-password", DisplayName: username + " display",
+		Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: manager.Group,
+		AccountType: model.UserAccountTypeStandard, ChannelOwnerId: manager.Id, AuthVersion: 1,
+		Email: username + "@example.com", AccessToken: &accessToken, AffCode: username + "-aff",
+	}
+	require.NoError(t, db.Create(&child).Error)
+	return child
+}
+
+func configureRegistrationInvitationTest(t *testing.T) {
+	t.Helper()
+	previousRegisterEnabled := common.RegisterEnabled
+	previousPasswordRegisterEnabled := common.PasswordRegisterEnabled
+	previousEmailVerificationEnabled := common.EmailVerificationEnabled
+	previousGenerateDefaultToken := constant.GenerateDefaultToken
+	common.RegisterEnabled = true
+	common.PasswordRegisterEnabled = true
+	common.EmailVerificationEnabled = false
+	constant.GenerateDefaultToken = false
+	t.Cleanup(func() {
+		common.RegisterEnabled = previousRegisterEnabled
+		common.PasswordRegisterEnabled = previousPasswordRegisterEnabled
+		common.EmailVerificationEnabled = previousEmailVerificationEnabled
+		constant.GenerateDefaultToken = previousGenerateDefaultToken
+	})
+}
+
+func performRegistrationRequest(t *testing.T, username, affCode string) *httptest.ResponseRecorder {
+	t.Helper()
+	body, err := common.Marshal(map[string]string{
+		"username": username,
+		"password": "password123",
+		"aff_code": affCode,
+	})
+	require.NoError(t, err)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/user/register", strings.NewReader(string(body)))
+	c.Request.Header.Set("Content-Type", "application/json")
+	Register(c)
+	return recorder
+}
+
+type registrationInvitationOAuthProvider struct{}
+
+func (*registrationInvitationOAuthProvider) GetName() string { return "Registration Invitation" }
+func (*registrationInvitationOAuthProvider) IsEnabled() bool { return true }
+func (*registrationInvitationOAuthProvider) ExchangeToken(context.Context, string, *gin.Context) (*oauth.OAuthToken, error) {
+	return &oauth.OAuthToken{}, nil
+}
+func (*registrationInvitationOAuthProvider) GetUserInfo(context.Context, *oauth.OAuthToken) (*oauth.OAuthUser, error) {
+	return nil, errors.New("not used")
+}
+func (*registrationInvitationOAuthProvider) IsUserIDTaken(providerUserID string) bool {
+	return model.IsGitHubIdAlreadyTaken(providerUserID)
+}
+func (*registrationInvitationOAuthProvider) FillUserByProviderID(user *model.User, providerUserID string) error {
+	user.GitHubId = providerUserID
+	return user.FillUserByGitHubId()
+}
+func (*registrationInvitationOAuthProvider) SetProviderUserID(user *model.User, providerUserID string) {
+	user.GitHubId = providerUserID
+}
+func (*registrationInvitationOAuthProvider) GetProviderPrefix() string { return "invite_oauth_" }
+func (*registrationInvitationOAuthProvider) ProviderUserIDColumn() string {
+	return "github_id"
+}
+
+func TestRegistrationInvitationAssignsOnlyActiveTopLevelChannelAccounts(t *testing.T) {
+	tests := []struct {
+		name        string
+		role        int
+		accountType string
+		status      int
+		ownerID     int
+		deleted     bool
+		wantOwner   bool
+		wantInviter bool
+	}{
+		{name: "active channel", role: common.RoleCommonUser, accountType: model.UserAccountTypeChannel, status: common.UserStatusEnabled, wantOwner: true, wantInviter: true},
+		{name: "ordinary user", role: common.RoleCommonUser, accountType: model.UserAccountTypeStandard, status: common.UserStatusEnabled, wantInviter: true},
+		{name: "disabled channel", role: common.RoleCommonUser, accountType: model.UserAccountTypeChannel, status: common.UserStatusDisabled, wantInviter: true},
+		{name: "nested channel", role: common.RoleCommonUser, accountType: model.UserAccountTypeChannel, status: common.UserStatusEnabled, ownerID: 999, wantInviter: true},
+		{name: "admin channel", role: common.RoleAdminUser, accountType: model.UserAccountTypeChannel, status: common.UserStatusEnabled, wantInviter: true},
+		{name: "deleted channel", role: common.RoleCommonUser, accountType: model.UserAccountTypeChannel, status: common.UserStatusEnabled, deleted: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			db := setupManageUserTestDB(t)
+			configureRegistrationInvitationTest(t)
+			inviter := model.User{
+				Username: "registration-inviter", Role: test.role, Status: test.status,
+				Group: "inviter-group", AccountType: test.accountType, ChannelOwnerId: test.ownerID,
+				AuthVersion: 1, AffCode: "registration-invite-code",
+			}
+			require.NoError(t, db.Create(&inviter).Error)
+			if test.deleted {
+				require.NoError(t, db.Delete(&inviter).Error)
+			}
+
+			recorder := performRegistrationRequest(t, "registration-invitee", inviter.AffCode)
+			assert.Equal(t, http.StatusOK, recorder.Code)
+			assert.Contains(t, recorder.Body.String(), `"success":true`)
+
+			var invitee model.User
+			require.NoError(t, db.Where("username = ?", "registration-invitee").First(&invitee).Error)
+			assert.Equal(t, model.UserAccountTypeStandard, invitee.AccountType)
+			if test.wantInviter {
+				assert.Equal(t, inviter.Id, invitee.InviterId)
+			} else {
+				assert.Zero(t, invitee.InviterId)
+			}
+			if test.wantOwner {
+				assert.Equal(t, inviter.Id, invitee.ChannelOwnerId)
+				assert.Equal(t, inviter.Group, invitee.Group)
+			} else {
+				assert.Zero(t, invitee.ChannelOwnerId)
+				assert.Equal(t, "default", invitee.Group)
+			}
+		})
+	}
+}
+
+func TestOAuthRegistrationInvitationAssignsNewUserWithoutRebindingExistingUser(t *testing.T) {
+	db := setupManageUserTestDB(t)
+	configureRegistrationInvitationTest(t)
+	channel := createChannelManager(t, db, "oauth-registration-channel", "oauth-channel-group")
+	provider := &registrationInvitationOAuthProvider{}
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/oauth/registration-invitation", nil)
+
+	created, migration, err := findOrCreateOAuthUser(c, provider, &oauth.OAuthUser{
+		ProviderUserID: "new-oauth-user", Username: "oauth-channel-invitee",
+	}, &oauth.OAuthToken{}, channel.AffCode)
+	require.NoError(t, err)
+	assert.Nil(t, migration)
+	assert.Equal(t, channel.Id, created.InviterId)
+	assert.Equal(t, channel.Id, created.ChannelOwnerId)
+	assert.Equal(t, channel.Group, created.Group)
+	assert.Equal(t, model.UserAccountTypeStandard, created.AccountType)
+
+	existing := model.User{
+		Username: "existing-oauth-user", GitHubId: "existing-provider-id",
+		Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: "existing-group",
+		AccountType: model.UserAccountTypeStandard, AuthVersion: 1, AffCode: "existing-oauth-aff",
+	}
+	require.NoError(t, db.Create(&existing).Error)
+
+	returned, migration, err := findOrCreateOAuthUser(c, provider, &oauth.OAuthUser{
+		ProviderUserID: existing.GitHubId, Username: existing.Username,
+	}, &oauth.OAuthToken{}, channel.AffCode)
+	require.NoError(t, err)
+	assert.Nil(t, migration)
+	assert.Equal(t, existing.Id, returned.Id)
+	var unchanged model.User
+	require.NoError(t, db.First(&unchanged, existing.Id).Error)
+	assert.Zero(t, unchanged.InviterId)
+	assert.Zero(t, unchanged.ChannelOwnerId)
+	assert.Equal(t, "existing-group", unchanged.Group)
 }
 
 func TestManageUserDisableAdvancesAuthVersionOnceAndRevokesSession(t *testing.T) {
@@ -190,6 +403,295 @@ func TestManageUserDeleteReturnsImmediatelyAndUnknownActionFails(t *testing.T) {
 	require.NoError(t, db.First(&unchanged, unchanged.Id).Error)
 	assert.EqualValues(t, 1, unchanged.AuthVersion)
 	assert.Equal(t, common.UserStatusEnabled, unchanged.Status)
+}
+
+func TestAdminUserReadEndpointsEnforceRoleBoundaryAndRedactSecrets(t *testing.T) {
+	db := setupManageUserTestDB(t)
+	accessToken := "management-access-token"
+	commonUser := model.User{
+		Username: "visible-user", Password: "stored-password", DisplayName: "Visible User",
+		Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: "default",
+		Email: "visible-user@example.com", GitHubId: "github-visible", DiscordId: "discord-visible",
+		OidcId: "oidc-visible", WeChatId: "wechat-visible", TelegramId: "telegram-visible",
+		LinuxDOId: "linuxdo-visible", AccessToken: &accessToken, AffCode: "visible-aff-code",
+		AffQuota: 123, Setting: `{"webhook_secret":"secret-value","gotify_token":"gotify-secret"}`,
+		StripeCustomer: "cus_secret", AuthVersion: 7,
+	}
+	peerAdmin := model.User{
+		Username: "peer-admin", Password: "peer-admin-password", Role: common.RoleAdminUser,
+		Status: common.UserStatusEnabled, Group: "default", Email: "peer-admin@example.com",
+		AffCode: "peer-admin-aff", Setting: `{"webhook_secret":"peer-secret"}`,
+	}
+	root := model.User{
+		Username: "root-user", Password: "root-password", Role: common.RoleRootUser,
+		Status: common.UserStatusEnabled, Group: "default", Email: "root-user@example.com",
+		AffCode: "root-user-aff", Setting: `{"webhook_secret":"root-secret"}`,
+	}
+	require.NoError(t, db.Create(&commonUser).Error)
+	require.NoError(t, db.Create(&peerAdmin).Error)
+	require.NoError(t, db.Create(&root).Error)
+
+	readPage := func(t *testing.T, recorder *httptest.ResponseRecorder) (bool, int, []map[string]any) {
+		t.Helper()
+		var response struct {
+			Success bool `json:"success"`
+			Data    struct {
+				Items []map[string]any `json:"items"`
+				Total int              `json:"total"`
+			} `json:"data"`
+		}
+		require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+		return response.Success, response.Data.Total, response.Data.Items
+	}
+
+	recorder := performAdminUserReadRequest(t, common.RoleAdminUser, http.MethodGet, "/api/user/?p=1&page_size=20", GetAllUsers)
+	success, total, items := readPage(t, recorder)
+	require.True(t, success)
+	assert.Equal(t, 1, total)
+	require.Len(t, items, 1)
+	assert.Equal(t, commonUser.Username, items[0]["username"])
+	for _, field := range []string{
+		"password", "access_token", "access_token_created_at", "email", "github_id", "discord_id",
+		"oidc_id", "wechat_id", "telegram_id", "linux_do_id", "setting", "stripe_customer",
+		"aff_code", "aff_quota", "auth_version", "verification_code", "original_password",
+	} {
+		assert.NotContains(t, items[0], field)
+	}
+
+	recorder = performAdminUserReadRequest(t, common.RoleAdminUser, http.MethodGet, "/api/user/search?keyword=root-user%40example.com", SearchUsers)
+	success, total, items = readPage(t, recorder)
+	require.True(t, success)
+	assert.Zero(t, total)
+	assert.Empty(t, items)
+
+	recorder = performAdminUserReadRequest(t, common.RoleRootUser, http.MethodGet, "/api/user/?p=1&page_size=20", GetAllUsers)
+	success, total, items = readPage(t, recorder)
+	require.True(t, success)
+	assert.Equal(t, 3, total)
+	require.Len(t, items, 3)
+	roles := make([]int, 0, len(items))
+	for _, item := range items {
+		roles = append(roles, int(item["role"].(float64)))
+	}
+	sort.Ints(roles)
+	assert.Equal(t, []int{common.RoleCommonUser, common.RoleAdminUser, common.RoleRootUser}, roles)
+
+	recorder = performAdminUserReadRequest(t, common.RoleAdminUser, http.MethodGet, "/api/user/id", GetUser, commonUser.Id)
+	var detailResponse struct {
+		Success bool           `json:"success"`
+		Data    map[string]any `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &detailResponse))
+	require.True(t, detailResponse.Success)
+	assert.Equal(t, commonUser.Email, detailResponse.Data["email"])
+	assert.Equal(t, commonUser.GitHubId, detailResponse.Data["github_id"])
+	assert.Equal(t, commonUser.DiscordId, detailResponse.Data["discord_id"])
+	assert.Equal(t, commonUser.OidcId, detailResponse.Data["oidc_id"])
+	assert.Equal(t, commonUser.WeChatId, detailResponse.Data["wechat_id"])
+	assert.Equal(t, commonUser.TelegramId, detailResponse.Data["telegram_id"])
+	assert.Equal(t, commonUser.LinuxDOId, detailResponse.Data["linux_do_id"])
+	for _, field := range []string{
+		"password", "access_token", "access_token_created_at", "setting", "stripe_customer",
+		"aff_code", "aff_quota", "auth_version", "verification_code", "original_password",
+	} {
+		assert.NotContains(t, detailResponse.Data, field)
+	}
+
+	recorder = performAdminUserReadRequest(t, common.RoleAdminUser, http.MethodGet, "/api/user/id", GetUser, peerAdmin.Id)
+	detailResponse = struct {
+		Success bool           `json:"success"`
+		Data    map[string]any `json:"data"`
+	}{}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &detailResponse))
+	assert.False(t, detailResponse.Success)
+	assert.Empty(t, detailResponse.Data)
+	assert.NotContains(t, recorder.Body.String(), peerAdmin.Email)
+	assert.NotContains(t, recorder.Body.String(), "peer-secret")
+}
+
+func TestChannelManagerListsOnlyDirectUsersWithoutCredentialFields(t *testing.T) {
+	db := setupManageUserTestDB(t)
+	manager := createChannelManager(t, db, "channel-manager-a", "channel-a")
+	otherManager := createChannelManager(t, db, "channel-manager-b", "channel-b")
+	visible := createChannelChild(t, db, manager, "visible-child")
+	createChannelChild(t, db, otherManager, "other-child")
+	require.NoError(t, db.Create(&model.User{
+		Username: "owned-admin", Role: common.RoleAdminUser, Status: common.UserStatusEnabled,
+		Group: manager.Group, AccountType: model.UserAccountTypeStandard, ChannelOwnerId: manager.Id,
+		AffCode: "owned-admin-aff",
+	}).Error)
+
+	recorder := performChannelUserRequest(t, manager, http.MethodGet, "/api/user/channel/members/?p=1&page_size=20", "", GetChannelManagedUsers)
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	var response struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Items []map[string]any `json:"items"`
+			Total int              `json:"total"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.True(t, response.Success)
+	assert.Equal(t, 1, response.Data.Total)
+	require.Len(t, response.Data.Items, 1)
+	item := response.Data.Items[0]
+	assert.Equal(t, visible.Username, item["username"])
+	for _, field := range []string{"password", "access_token", "email", "github_id", "oidc_id", "wechat_id", "telegram_id", "setting", "auth_version"} {
+		assert.NotContains(t, item, field)
+	}
+
+	recorder = performChannelUserRequest(t, manager, http.MethodGet, "/api/user/channel/members/search?keyword=visible", "", GetChannelManagedUsers)
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.True(t, response.Success)
+	require.Len(t, response.Data.Items, 1)
+	assert.Equal(t, visible.Username, response.Data.Items[0]["username"])
+}
+
+func TestChannelManagerCreateAndUpdateIgnorePrivilegedFields(t *testing.T) {
+	db := setupManageUserTestDB(t)
+	manager := createChannelManager(t, db, "channel-create-manager", "inherited-group")
+	otherManager := createChannelManager(t, db, "other-channel-manager", "other-group")
+	body := fmt.Sprintf(`{
+		"username":"channel-created-user",
+		"password":"12344321",
+		"display_name":"Created User",
+		"remark":"managed note",
+		"role":100,
+		"group":"forged-group",
+		"status":2,
+		"channel_owner_id":%d,
+		"account_type":"channel",
+		"quota":999999
+	}`, otherManager.Id)
+
+	recorder := performChannelUserRequest(t, manager, http.MethodPost, "/api/user/channel/members/", body, CreateChannelManagedUser)
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), `"success":true`)
+
+	var created model.User
+	require.NoError(t, db.Where("username = ?", "channel-created-user").First(&created).Error)
+	assert.Equal(t, common.RoleCommonUser, created.Role)
+	assert.Equal(t, model.UserAccountTypeStandard, created.AccountType)
+	assert.Equal(t, manager.Id, created.ChannelOwnerId)
+	assert.Equal(t, manager.Group, created.Group)
+	assert.Equal(t, common.UserStatusEnabled, created.Status)
+	assert.Equal(t, common.QuotaForNewUser, created.Quota)
+	assert.NotEqual(t, "12344321", created.Password)
+
+	createdPassword := created.Password
+	updateBody := fmt.Sprintf(`{
+		"display_name":"Updated User",
+		"remark":"updated note",
+		"password":"forged-password",
+		"role":100,
+		"group":"forged-group",
+		"status":2,
+		"channel_owner_id":%d,
+		"account_type":"channel",
+		"quota":999999
+	}`, otherManager.Id)
+	recorder = performChannelUserRequest(t, manager, http.MethodPut, "/api/user/channel/members/id", updateBody, UpdateChannelManagedUser, created.Id)
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), `"success":true`)
+	require.NoError(t, db.First(&created, created.Id).Error)
+	assert.Equal(t, "Updated User", created.DisplayName)
+	assert.Equal(t, "updated note", created.Remark)
+	assert.Equal(t, createdPassword, created.Password)
+	assert.Equal(t, common.RoleCommonUser, created.Role)
+	assert.Equal(t, model.UserAccountTypeStandard, created.AccountType)
+	assert.Equal(t, manager.Id, created.ChannelOwnerId)
+	assert.Equal(t, manager.Group, created.Group)
+	assert.Equal(t, common.UserStatusEnabled, created.Status)
+	assert.Equal(t, common.QuotaForNewUser, created.Quota)
+}
+
+func TestChannelManagerCannotAccessAnotherChannelsUser(t *testing.T) {
+	db := setupManageUserTestDB(t)
+	manager := createChannelManager(t, db, "channel-owner-a", "channel-a")
+	otherManager := createChannelManager(t, db, "channel-owner-b", "channel-b")
+	target := createChannelChild(t, db, otherManager, "other-managed-user")
+	originalDisplayName := target.DisplayName
+
+	requests := []struct {
+		name, method, path, body string
+		handler                  gin.HandlerFunc
+		withTarget               bool
+	}{
+		{name: "get", method: http.MethodGet, path: "/api/user/channel/members/id", handler: GetChannelManagedUser, withTarget: true},
+		{name: "update", method: http.MethodPut, path: "/api/user/channel/members/id", body: `{"display_name":"forged","remark":"forged"}`, handler: UpdateChannelManagedUser, withTarget: true},
+		{name: "status", method: http.MethodPost, path: "/api/user/channel/members/manage", body: fmt.Sprintf(`{"id":%d,"action":"disable"}`, target.Id), handler: ManageChannelManagedUser},
+		{name: "delete", method: http.MethodDelete, path: "/api/user/channel/members/id", handler: DeleteChannelManagedUser, withTarget: true},
+	}
+	for _, tc := range requests {
+		t.Run(tc.name, func(t *testing.T) {
+			var recorder *httptest.ResponseRecorder
+			if tc.withTarget {
+				recorder = performChannelUserRequest(t, manager, tc.method, tc.path, tc.body, tc.handler, target.Id)
+			} else {
+				recorder = performChannelUserRequest(t, manager, tc.method, tc.path, tc.body, tc.handler)
+			}
+			assert.Equal(t, http.StatusOK, recorder.Code)
+			assert.Contains(t, recorder.Body.String(), `"success":false`)
+		})
+	}
+
+	var unchanged model.User
+	require.NoError(t, db.First(&unchanged, target.Id).Error)
+	assert.Equal(t, originalDisplayName, unchanged.DisplayName)
+	assert.Empty(t, unchanged.Remark)
+	assert.Equal(t, common.UserStatusEnabled, unchanged.Status)
+	assert.EqualValues(t, 1, unchanged.AuthVersion)
+	assert.False(t, unchanged.DeletedAt.Valid)
+}
+
+func TestChannelManagerDisableAdvancesAuthVersionAndRevokesSession(t *testing.T) {
+	db := setupManageUserTestDB(t)
+	manager := createChannelManager(t, db, "channel-disable-manager", "channel-a")
+	target := createChannelChild(t, db, manager, "channel-disable-user")
+	now := time.Now().Unix()
+	require.NoError(t, db.Create(&model.UserSession{
+		SID: "channel-managed-session", UserID: target.Id, Version: 1, UserAuthVersion: 1,
+		Status: model.UserSessionStatusActive, RefreshHash: "refresh-hash", LoginMethod: "password",
+		LastActiveAt: now, ExpiresAt: now + 3600,
+	}).Error)
+
+	recorder := performChannelUserRequest(t, manager, http.MethodPost, "/api/user/channel/members/manage", fmt.Sprintf(`{"id":%d,"action":"disable"}`, target.Id), ManageChannelManagedUser)
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), `"success":true`)
+
+	var updated model.User
+	require.NoError(t, db.First(&updated, target.Id).Error)
+	assert.Equal(t, common.UserStatusDisabled, updated.Status)
+	assert.EqualValues(t, 2, updated.AuthVersion)
+	var session model.UserSession
+	require.NoError(t, db.First(&session, "sid = ?", "channel-managed-session").Error)
+	assert.Equal(t, model.UserSessionStatusRevoked, session.Status)
+	assert.Equal(t, "channel_manager_status_change", session.RevokedReason)
+}
+
+func TestInvalidChannelManagersCannotManageChannelUsers(t *testing.T) {
+	for _, tc := range []struct {
+		name, accountType string
+		status, ownerID   int
+	}{
+		{name: "standard user", accountType: model.UserAccountTypeStandard, status: common.UserStatusEnabled},
+		{name: "disabled channel", accountType: model.UserAccountTypeChannel, status: common.UserStatusDisabled},
+		{name: "nested channel", accountType: model.UserAccountTypeChannel, status: common.UserStatusEnabled, ownerID: 999},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := setupManageUserTestDB(t)
+			manager := model.User{
+				Username: "invalid-channel-manager", Role: common.RoleCommonUser, Status: tc.status,
+				Group: "default", AccountType: tc.accountType, ChannelOwnerId: tc.ownerID,
+				AuthVersion: 1, AffCode: "invalid-channel-manager-aff",
+			}
+			require.NoError(t, db.Create(&manager).Error)
+
+			recorder := performChannelUserRequest(t, manager, http.MethodGet, "/api/user/channel/members/", "", GetChannelManagedUsers)
+			assert.Equal(t, http.StatusForbidden, recorder.Code)
+			assert.Contains(t, recorder.Body.String(), `"success":false`)
+		})
+	}
 }
 
 func createQuotaTestOperator(t *testing.T, db *gorm.DB, role int) model.User {

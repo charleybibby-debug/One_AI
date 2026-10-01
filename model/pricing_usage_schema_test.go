@@ -101,8 +101,9 @@ func TestPricingAliasCarriesPluginUsageSchemaAndTailExpr(t *testing.T) {
 		require.NoError(t, config.GlobalConfig.LoadFromDB(saved))
 	})
 	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
-		"billing_setting.billing_mode": `{"pricing-usage-model":"tiered_expr","alias-own-expr":"tiered_expr"}`,
-		"billing_setting.billing_expr": `{"pricing-usage-model":"u(\"seconds\")","alias-own-expr":"u(\"seconds\") * 2"}`,
+		"billing_setting.billing_mode":          `{"pricing-usage-model":"tiered_expr","alias-own-expr":"tiered_expr"}`,
+		"billing_setting.billing_expr":          `{"pricing-usage-model":"u(\"seconds\")","alias-own-expr":"u(\"seconds\") * 2"}`,
+		billing_setting.PluginBillingExprOption: `{"pricing-usage-probe::alias-model":"tier(\"base\", u(\"seconds\") * 0.5)"}`,
 	}))
 	InvalidatePricingCache()
 
@@ -113,6 +114,9 @@ func TestPricingAliasCarriesPluginUsageSchemaAndTailExpr(t *testing.T) {
 	assert.Equal(t, "Estimated duration.", pricing["alias-model"].BillingUsageSchema["seconds"].Description["en"])
 	assert.Equal(t, "tiered_expr", pricing["alias-model"].BillingMode)
 	assert.Equal(t, `u("seconds")`, pricing["alias-model"].BillingExpr)
+	require.Len(t, pricing["alias-model"].BillingPluginVariants, 1)
+	assert.Equal(t, pluginKey, pricing["alias-model"].BillingPluginVariants[0].PluginKey)
+	assert.Equal(t, `tier("base", u("seconds") * 0.5)`, pricing["alias-model"].BillingPluginVariants[0].BillingExpr)
 	assert.Equal(t, "tiered_expr", pricing["pricing-usage-model"].BillingMode)
 	assert.Equal(t, `u("seconds")`, pricing["pricing-usage-model"].BillingExpr)
 
@@ -134,6 +138,48 @@ func TestPricingAliasCarriesPluginUsageSchemaAndTailExpr(t *testing.T) {
 	refreshed := pricingByModel(GetPricing())
 	assert.Equal(t, `u("seconds") * 2`, refreshed["alias-own-expr"].BillingExpr)
 	assert.Equal(t, "second", refreshed["alias-own-expr"].BillingUsageSchema["seconds"].Unit)
+}
+
+func TestPricingAliasAllowsCaseFoldedDeclaredModel(t *testing.T) {
+	resetPricingEndpointTestTables(t)
+	require.NoError(t, DB.AutoMigrate(&Option{}))
+	canonicalSource := pricingUsagePluginSource("1.0.0", `{}`)
+	canonicalSource = strings.ReplaceAll(canonicalSource, "pricing-usage-probe", "pricing-canonical-model")
+	canonicalSource = strings.ReplaceAll(canonicalSource, "pricing-usage-model", "MiniMax-H3")
+	aliasSource := pricingUsagePluginSource("1.0.0", `{seconds:{type:"number",unit:"second"}}`)
+	aliasSource = strings.ReplaceAll(aliasSource, "pricing-usage-probe", "pricing-case-alias")
+	aliasSource = strings.ReplaceAll(aliasSource, "pricing-usage-model", "tokenshare-minimax-h3")
+	_, err := jsplugin.DefaultRegistry.Register(canonicalSource, jsplugin.Options{})
+	require.NoError(t, err)
+	_, err = jsplugin.DefaultRegistry.Register(aliasSource, jsplugin.Options{})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		jsplugin.DefaultRegistry.Unregister("pricing-canonical-model")
+		jsplugin.DefaultRegistry.Unregister("pricing-case-alias")
+	})
+
+	mapping := `{"Minimax-H3":"tokenshare-minimax-h3"}`
+	channel := &Channel{Id: 912, Type: constant.ChannelTypeTaskPlugin, Key: "key-912", Status: 1, Name: "channel-912", Models: "Minimax-H3", ModelMapping: &mapping}
+	require.NoError(t, DB.Create(channel).Error)
+	insertPricingEndpointAbility(t, 912, "Minimax-H3")
+	InitChannelCache()
+	require.NoError(t, DB.Save(&Option{Key: billing_setting.PluginBillingExprOption, Value: `{"pricing-case-alias::Minimax-H3":"tier(\"base\", u(\"seconds\") * 0.5)"}`}).Error)
+
+	target, ok := ResolveTaskModelAlias(jsplugin.DefaultRegistry.Generation(), "Minimax-H3")
+	require.True(t, ok)
+	assert.Equal(t, "tokenshare-minimax-h3", target.Declared)
+	require.NoError(t, ValidateModelPricing("Minimax-H3", PricingValues{
+		billing_setting.PluginBillingExprOption: map[string]any{
+			"pricing-case-alias": `tier("base", u("seconds") * 0.5)`,
+		},
+	}))
+	snapshot, err := GetModelPricingSnapshot([]string{"Minimax-H3"})
+	require.NoError(t, err)
+	require.Len(t, snapshot.Entries, 1)
+	require.Len(t, snapshot.Entries[0].PluginVariants, 1)
+	variant := snapshot.Entries[0].PluginVariants[0]
+	assert.False(t, variant.Stale)
+	assert.Equal(t, "second", variant.UsageSchema["seconds"].Unit)
 }
 
 func pricingByModel(pricings []Pricing) map[string]Pricing {

@@ -278,12 +278,16 @@ func GetModelPricingSnapshot(names []string) (*ModelPricingSnapshot, error) {
 				entry.UsageSchema, _ = plugin.Meta.UsageForModel(target.Declared)
 			}
 		}
-		plugins := generation.PluginsByModel(name)
+		pricingPlugins := taskPricingPlugins(generation, name)
+		pluginByKey := make(map[string]taskPricingPlugin, len(pricingPlugins))
+		for _, pricingPlugin := range pricingPlugins {
+			pluginByKey[pricingPlugin.plugin.Meta.Key] = pricingPlugin
+		}
 		configuredVariants, _ := configured[billing_setting.PluginBillingExprOption].(map[string]any)
-		if len(plugins) >= 2 || len(configuredVariants) > 0 {
-			keys := make(map[string]bool, len(plugins)+len(configuredVariants))
-			for _, plugin := range plugins {
-				keys[plugin.Meta.Key] = true
+		if len(pricingPlugins) >= 2 || len(configuredVariants) > 0 {
+			keys := make(map[string]bool, len(pricingPlugins)+len(configuredVariants))
+			for _, pricingPlugin := range pricingPlugins {
+				keys[pricingPlugin.plugin.Meta.Key] = true
 			}
 			for key := range configuredVariants {
 				keys[key] = true
@@ -292,7 +296,8 @@ func GetModelPricingSnapshot(names []string) (*ModelPricingSnapshot, error) {
 				configuredValue, overridden := configuredVariants[key]
 				configuredExpr, _ := configuredValue.(string)
 				plugin, exists := generation.Get(key)
-				if !exists || !slices.Contains(plugin.Meta.Models, name) {
+				pricingPlugin, declaresModel := pluginByKey[key]
+				if !exists || !declaresModel {
 					variant := ModelPricingPluginVariant{
 						PluginKey: key, PluginName: key, Configured: configuredExpr,
 						UsageSchema: map[string]jsplugin.UsageFieldSchema{}, Stale: true,
@@ -303,7 +308,7 @@ func GetModelPricingSnapshot(names []string) (*ModelPricingSnapshot, error) {
 					entry.PluginVariants = append(entry.PluginVariants, variant)
 					continue
 				}
-				schema, examples := plugin.Meta.UsageForModel(name)
+				schema, examples := pricingPlugin.plugin.Meta.UsageForModel(pricingPlugin.model)
 				if schema == nil {
 					schema = map[string]jsplugin.UsageFieldSchema{}
 				}
@@ -379,13 +384,22 @@ func validateModelPricing(name string, values, previous PricingValues) error {
 				return fmt.Errorf("model %s: plugin %s: billing expression is required", name, key)
 			}
 			plugin, exists := generation.Get(key)
-			if !exists || !slices.Contains(plugin.Meta.Models, name) {
+			declaredModel := name
+			if exists && !slices.Contains(plugin.Meta.Models, name) {
+				target, resolved := ResolveTaskModelAlias(generation, name)
+				if resolved && target.PluginKey == key && target.Declared != "" && slices.Contains(plugin.Meta.Models, target.Declared) {
+					declaredModel = target.Declared
+				} else {
+					exists = false
+				}
+			}
+			if !exists {
 				if previousVariants[key] == expression {
 					continue
 				}
 				return fmt.Errorf("model %s: plugin %s does not declare this model", name, key)
 			}
-			schema, _ := plugin.Meta.UsageForModel(name)
+			schema, _ := plugin.Meta.UsageForModel(declaredModel)
 			if err := billing_setting.SmokeTestTaskExpr(expression, schema); err != nil {
 				return fmt.Errorf("model %s: plugin %s: %w", name, key, err)
 			}

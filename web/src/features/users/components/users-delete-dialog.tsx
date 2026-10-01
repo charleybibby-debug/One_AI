@@ -30,7 +30,7 @@ import { useUsers } from './users-provider'
 
 export function UsersDeleteDialog() {
   const { t } = useTranslation()
-  const { open, setOpen, currentRow, triggerRefresh } = useUsers()
+  const { open, setOpen, currentRow, triggerRefresh, scope } = useUsers()
   const [isDeleting, setIsDeleting] = useState(false)
 
   const handleDelete = async () => {
@@ -38,7 +38,7 @@ export function UsersDeleteDialog() {
 
     setIsDeleting(true)
     try {
-      const result = await deleteUser(currentRow.id)
+      const result = await deleteUser(currentRow.id, scope)
       if (result.success) {
         toast.success(t(getUserActionMessage('delete')))
         setOpen(null)

@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import type { Row } from '@tanstack/react-table'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -25,6 +26,7 @@ import { api } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth-store'
 
 import type { User } from '../../types'
+import { DataTableRowActions } from '../data-table-row-actions'
 import { UsersMutateDrawer } from '../users-mutate-drawer'
 import { UsersProvider } from '../users-provider'
 
@@ -38,6 +40,15 @@ const target: User = {
   used_quota: 0,
   request_count: 0,
   group: 'default',
+}
+const channelTarget: User = {
+  ...target,
+  username: 'channel-member',
+  display_name: 'Channel member',
+  role: 1,
+  account_type: 'standard',
+  channel_owner_id: 1,
+  remark: 'Existing note',
 }
 const label = "View other accounts' audit logs"
 const description =
@@ -101,6 +112,33 @@ function renderPermissions(viewerRole: number, allowed?: boolean) {
   )
 }
 
+function renderChannelDrawer(currentRow?: User) {
+  useAuthStore.getState().auth.setUser({
+    id: 1,
+    username: 'channel-manager',
+    role: 1,
+    account_type: 'channel',
+    channel_owner_id: 0,
+  })
+  vi.spyOn(api, 'get').mockResolvedValue({
+    data: { success: true, data: channelTarget },
+  })
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  return render(
+    <QueryClientProvider client={client}>
+      <UsersProvider scope='channel'>
+        <UsersMutateDrawer
+          open
+          onOpenChange={() => undefined}
+          currentRow={currentRow}
+        />
+      </UsersProvider>
+    </QueryClientProvider>
+  )
+}
+
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
@@ -142,4 +180,87 @@ it('admin cannot edit the audit permission even when the catalog is available', 
   expect(
     screen.queryByRole('checkbox', { name: new RegExp(label) })
   ).not.toBeInTheDocument()
+})
+
+it('channel manager updates only the display name and remark of a direct user', async () => {
+  const put = vi
+    .spyOn(api, 'put')
+    .mockResolvedValue({ data: { success: true } })
+  renderChannelDrawer(channelTarget)
+
+  const displayName = await screen.findByLabelText('Display Name')
+  expect(api.get).toHaveBeenCalledWith('/api/user/channel/members/2')
+  expect(screen.queryByLabelText('Password')).not.toBeInTheDocument()
+  expect(screen.queryByLabelText('Group')).not.toBeInTheDocument()
+  expect(screen.queryByText(/Remaining Quota/)).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('checkbox', { name: new RegExp(label) })
+  ).not.toBeInTheDocument()
+
+  await userEvent.clear(displayName)
+  await userEvent.type(displayName, 'Renamed member')
+  const remark = screen.getByLabelText('Remark')
+  await userEvent.clear(remark)
+  await userEvent.type(remark, 'Updated note')
+  await userEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+
+  await waitFor(() =>
+    expect(put).toHaveBeenCalledWith('/api/user/channel/members/2', {
+      display_name: 'Renamed member',
+      remark: 'Updated note',
+    })
+  )
+})
+
+it('channel manager creates a standard user through the scoped endpoint', async () => {
+  const post = vi
+    .spyOn(api, 'post')
+    .mockResolvedValue({ data: { success: true } })
+  renderChannelDrawer()
+
+  expect(screen.queryByLabelText('Role')).not.toBeInTheDocument()
+  await userEvent.type(screen.getByLabelText('Username'), 'new-channel-user')
+  await userEvent.type(screen.getByLabelText('Display Name'), 'New user')
+  await userEvent.type(screen.getByLabelText('Password'), '12344321')
+  await userEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+
+  await waitFor(() =>
+    expect(post).toHaveBeenCalledWith(
+      '/api/user/channel/members',
+      expect.objectContaining({
+        username: 'new-channel-user',
+        display_name: 'New user',
+        password: '12344321',
+      })
+    )
+  )
+  const payload = post.mock.calls[0]?.[1]
+  expect(payload).not.toHaveProperty('role')
+  expect(payload).not.toHaveProperty('group')
+  expect(payload).not.toHaveProperty('quota_dollars')
+  expect(payload).not.toHaveProperty('channel_owner_id')
+})
+
+it('channel user actions expose only scoped account operations', async () => {
+  render(
+    <UsersProvider scope='channel'>
+      <DataTableRowActions row={{ original: channelTarget } as Row<User>} />
+    </UsersProvider>
+  )
+
+  await userEvent.click(screen.getByRole('button', { name: 'Open menu' }))
+  expect(screen.getByRole('menuitem', { name: 'Disable' })).toBeVisible()
+  expect(screen.getByRole('menuitem', { name: 'Delete' })).toBeVisible()
+  for (const action of [
+    'Promote',
+    'Demote',
+    'Manage Bindings',
+    'Manage Subscriptions',
+    'Reset Passkey',
+    'Reset 2FA',
+  ]) {
+    expect(
+      screen.queryByRole('menuitem', { name: action })
+    ).not.toBeInTheDocument()
+  }
 })

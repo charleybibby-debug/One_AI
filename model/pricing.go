@@ -397,17 +397,18 @@ func updatePricing() {
 			pricing.BillingUsageSchema = jsplugin.CloneUsageSchema(usageSchema)
 			pricing.BillingUsageExamples = jsplugin.CloneUsageExamples(usageExamples)
 		}
-		providers := pluginGeneration.PluginsByModel(model)
+		pricingPlugins := taskPricingPlugins(pluginGeneration, model)
 		hasProviderOverride := false
-		for _, provider := range providers {
-			if _, configured := billing_setting.GetPluginBillingExpr(provider.Meta.Key, model); configured {
+		for _, pricingPlugin := range pricingPlugins {
+			if _, configured := billing_setting.GetPluginBillingExpr(pricingPlugin.plugin.Meta.Key, model); configured {
 				hasProviderOverride = true
 				break
 			}
 		}
-		if hasProviderOverride || (len(providers) >= 2 && pricing.BillingMode == billing_setting.BillingModeTieredExpr) {
-			for _, provider := range providers {
-				schema, examples := provider.Meta.UsageForModel(model)
+		if hasProviderOverride || (len(pricingPlugins) >= 2 && pricing.BillingMode == billing_setting.BillingModeTieredExpr) {
+			for _, pricingPlugin := range pricingPlugins {
+				provider := pricingPlugin.plugin
+				schema, examples := provider.Meta.UsageForModel(pricingPlugin.model)
 				if schema == nil {
 					schema = map[string]jsplugin.UsageFieldSchema{}
 				}

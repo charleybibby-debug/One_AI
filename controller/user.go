@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/i18n"
@@ -272,18 +273,24 @@ func Register(c *gin.Context) {
 		return
 	}
 	affCode := user.AffCode // this code is the inviter's code, not the user's own code
-	inviterId, _ := model.GetUserIdByAffCode(affCode)
 	cleanUser := model.User{
 		Username:    user.Username,
 		Password:    user.Password,
 		DisplayName: user.Username,
-		InviterId:   inviterId,
 		Role:        common.RoleCommonUser, // 明确设置角色为普通用户
 	}
 	if common.EmailVerificationEnabled {
 		cleanUser.Email = user.Email
 	}
-	if err := cleanUser.Insert(inviterId); err != nil {
+	inviterId := 0
+	if err := model.DB.Transaction(func(tx *gorm.DB) error {
+		var err error
+		inviterId, err = model.ApplyRegistrationInvitation(tx, &cleanUser, affCode)
+		if err != nil {
+			return err
+		}
+		return cleanUser.InsertWithTx(tx, inviterId)
+	}); err != nil {
 		if errors.Is(err, model.ErrEmailAlreadyTaken) {
 			common.ApiErrorI18n(c, i18n.MsgUserEmailAlreadyTaken)
 			return
@@ -291,6 +298,7 @@ func Register(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	cleanUser.FinishInsert(inviterId)
 
 	// 获取插入后的用户ID
 	var insertedUser model.User
@@ -337,14 +345,18 @@ func Register(c *gin.Context) {
 func GetAllUsers(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	sortOptions := model.NewUserSortOptions(c.Query("sort_by"), c.Query("sort_order"))
-	users, total, err := model.GetAllUsers(pageInfo, sortOptions)
+	users, total, err := model.GetAllUsers(pageInfo, c.GetInt("role"), sortOptions)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
 
 	pageInfo.SetTotal(int(total))
-	pageInfo.SetItems(users)
+	items := make([]adminManagedUserListView, len(users))
+	for i := range users {
+		items[i] = adminManagedUserToListView(users[i])
+	}
+	pageInfo.SetItems(items)
 
 	common.ApiSuccess(c, pageInfo)
 	return
@@ -367,14 +379,18 @@ func SearchUsers(c *gin.Context) {
 	}
 	pageInfo := common.GetPageQuery(c)
 	sortOptions := model.NewUserSortOptions(c.Query("sort_by"), c.Query("sort_order"))
-	users, total, err := model.SearchUsers(keyword, group, role, status, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), sortOptions)
+	users, total, err := model.SearchUsers(keyword, group, role, status, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), c.GetInt("role"), sortOptions)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
 
 	pageInfo.SetTotal(int(total))
-	pageInfo.SetItems(users)
+	items := make([]adminManagedUserListView, len(users))
+	for i := range users {
+		items[i] = adminManagedUserToListView(users[i])
+	}
+	pageInfo.SetItems(items)
 	common.ApiSuccess(c, pageInfo)
 	return
 }
@@ -383,13 +399,70 @@ func canManageTargetRole(myRole int, targetRole int) bool {
 	return myRole == common.RoleRootUser || myRole > targetRole
 }
 
+type adminManagedUserListView struct {
+	Id              int        `json:"id"`
+	Username        string     `json:"username"`
+	DisplayName     string     `json:"display_name"`
+	Role            int        `json:"role"`
+	AccountType     string     `json:"account_type"`
+	ChannelOwnerId  int        `json:"channel_owner_id"`
+	Status          int        `json:"status"`
+	Quota           int        `json:"quota"`
+	UsedQuota       int        `json:"used_quota"`
+	RequestCount    int        `json:"request_count"`
+	Group           string     `json:"group"`
+	Remark          string     `json:"remark,omitempty"`
+	AffCount        int        `json:"aff_count"`
+	AffHistoryQuota int        `json:"aff_history_quota"`
+	InviterId       int        `json:"inviter_id"`
+	CreatedAt       int64      `json:"created_at"`
+	LastLoginAt     int64      `json:"last_login_at"`
+	DeletedAt       *time.Time `json:"DeletedAt"`
+}
+
+type adminManagedUserDetailView struct {
+	adminManagedUserListView
+	Email            string                     `json:"email,omitempty"`
+	GitHubId         string                     `json:"github_id,omitempty"`
+	DiscordId        string                     `json:"discord_id,omitempty"`
+	OidcId           string                     `json:"oidc_id,omitempty"`
+	WeChatId         string                     `json:"wechat_id,omitempty"`
+	TelegramId       string                     `json:"telegram_id,omitempty"`
+	LinuxDOId        string                     `json:"linux_do_id,omitempty"`
+	AdminPermissions map[string]map[string]bool `json:"admin_permissions,omitempty"`
+}
+
+func adminManagedUserToListView(user *model.User) adminManagedUserListView {
+	view := adminManagedUserListView{
+		Id: user.Id, Username: user.Username, DisplayName: user.DisplayName,
+		Role: user.Role, AccountType: user.AccountType, ChannelOwnerId: user.ChannelOwnerId,
+		Status: user.Status, Quota: user.Quota, UsedQuota: user.UsedQuota,
+		RequestCount: user.RequestCount, Group: user.Group, Remark: user.Remark,
+		AffCount: user.AffCount, AffHistoryQuota: user.AffHistoryQuota, InviterId: user.InviterId,
+		CreatedAt: user.CreatedAt, LastLoginAt: user.LastLoginAt,
+	}
+	if user.DeletedAt.Valid {
+		view.DeletedAt = &user.DeletedAt.Time
+	}
+	return view
+}
+
+func adminManagedUserToDetailView(user *model.User) adminManagedUserDetailView {
+	return adminManagedUserDetailView{
+		adminManagedUserListView: adminManagedUserToListView(user),
+		Email:                    user.Email, GitHubId: user.GitHubId, DiscordId: user.DiscordId,
+		OidcId: user.OidcId, WeChatId: user.WeChatId, TelegramId: user.TelegramId,
+		LinuxDOId: user.LinuxDOId, AdminPermissions: user.AdminPermissions,
+	}
+}
+
 func GetUser(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	user, err := model.GetUserById(id, false)
+	user, err := model.GetAdminManagedUserById(id)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -403,7 +476,7 @@ func GetUser(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
-		"data":    user,
+		"data":    adminManagedUserToDetailView(user),
 	})
 	return
 }

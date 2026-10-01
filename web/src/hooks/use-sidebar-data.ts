@@ -40,7 +40,9 @@ import {
 import { useTranslation } from 'react-i18next'
 
 import type { SidebarData } from '@/components/layout/types'
+import { isChannelAccountManager } from '@/features/users/lib/channel-manager'
 import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 
 /**
  * Root navigation groups for the application sidebar.
@@ -50,6 +52,8 @@ import { ROLE } from '@/lib/roles'
  */
 export function useSidebarData(): SidebarData {
   const { t } = useTranslation()
+  const user = useAuthStore((state) => state.auth.user)
+  const showChannelUsers = isChannelAccountManager(user)
 
   return {
     navGroups: [
@@ -126,6 +130,15 @@ export function useSidebarData(): SidebarData {
             url: '/security',
             icon: ShieldCheck,
           },
+          ...(showChannelUsers
+            ? [
+                {
+                  title: t('Channel Users'),
+                  url: '/users' as const,
+                  icon: Users,
+                },
+              ]
+            : []),
         ],
       },
       {
