@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import type { AxiosRequestConfig } from 'axios'
+
 import type { PermissionCatalog } from '@/lib/admin-permissions'
 import { api } from '@/lib/api'
 import type { CustomOAuthBinding } from '@/lib/oauth'
@@ -35,6 +37,28 @@ import type {
 } from './types'
 
 const CHANNEL_USERS_BASE = '/api/user/channel/members'
+// A step-up proof is single-use, so the request carrying it must never be
+// replayed by the auth-refresh interceptor; it refreshes first instead.
+function securityProofConfig(proofToken?: string): AxiosRequestConfig {
+  if (!proofToken) return {}
+  return {
+    headers: { 'X-Security-Proof': proofToken },
+    singleUseAuthorization: true,
+  }
+}
+
+function resolveScopeAndProof(
+  scopeOrProof?: UserManagementScope | string,
+  proofToken?: string
+) {
+  if (scopeOrProof === 'admin' || scopeOrProof === 'channel') {
+    return { scope: scopeOrProof, proofToken }
+  }
+  return {
+    scope: 'admin' as UserManagementScope,
+    proofToken: scopeOrProof ?? proofToken,
+  }
+}
 
 // ============================================================================
 // User Management APIs
@@ -115,69 +139,86 @@ export async function getChannelAccounts(): Promise<
 }
 
 /**
- * Create a new user
+ * Create a new user. Creating an administrator requires an
+ * `admin.user.create` proof.
  */
 export async function createUser(
   data: UserFormData,
-  scope: UserManagementScope = 'admin'
+  scopeOrProof: UserManagementScope | string = 'admin',
+  proofToken?: string
 ): Promise<ApiResponse<User>> {
+  const { scope, proofToken: requestProof } = resolveScopeAndProof(scopeOrProof, proofToken)
   const payload =
     scope === 'channel'
       ? {
           username: data.username,
           password: data.password,
           display_name: data.display_name,
-          remark: data.remark,
+          ...(data.remark !== undefined ? { remark: data.remark } : {}),
         }
       : data
-  const res = await api.post(
-    scope === 'channel' ? CHANNEL_USERS_BASE : '/api/user/',
-    payload
-  )
+  const path = scope === 'channel' ? CHANNEL_USERS_BASE : '/api/user/'
+  const res = scope === 'admin' || requestProof
+    ? await api.post(path, payload, securityProofConfig(requestProof))
+    : await api.post(path, payload)
   return res.data
 }
 
 /**
- * Update an existing user
+ * Update an existing user. Changing the password or the admin permission
+ * matrix requires an `admin.user.update` proof.
  */
 export async function updateUser(
   data: UserFormData & { id: number },
-  scope: UserManagementScope = 'admin'
+  scopeOrProof: UserManagementScope | string = 'admin',
+  proofToken?: string
 ): Promise<ApiResponse<Partial<User>>> {
+  const { scope, proofToken: requestProof } = resolveScopeAndProof(scopeOrProof, proofToken)
   const path =
     scope === 'channel' ? `${CHANNEL_USERS_BASE}/${data.id}` : '/api/user/'
   const payload =
     scope === 'channel'
       ? { display_name: data.display_name, remark: data.remark }
       : data
-  const res = await api.put(path, payload)
+  const res = scope === 'admin' || requestProof
+    ? await api.put(path, payload, securityProofConfig(requestProof))
+    : await api.put(path, payload)
   return res.data
 }
 
 /**
- * Delete a single user (hard delete)
+ * Delete a single user (hard delete); requires an `admin.user.delete` proof
  */
 export async function deleteUser(
   id: number,
-  scope: UserManagementScope = 'admin'
+  scopeOrProof: UserManagementScope | string = 'admin',
+  proofToken?: string
 ): Promise<ApiResponse> {
+  const { scope, proofToken: requestProof } = resolveScopeAndProof(scopeOrProof, proofToken)
   const path =
     scope === 'channel' ? `${CHANNEL_USERS_BASE}/${id}` : `/api/user/${id}/`
-  const res = await api.delete(path)
+  const res = scope === 'admin' || requestProof
+    ? await api.delete(path, securityProofConfig(requestProof))
+    : await api.delete(path)
   return res.data
 }
 
 /**
- * Manage user (promote, demote, enable, disable, delete)
+ * Manage user (promote, demote, enable, disable, delete); requires an
+ * `admin.user.manage` proof (`admin.user.delete` for deletion)
  */
 export async function manageUser(
   id: number,
   action: ManageUserAction,
-  scope: UserManagementScope = 'admin'
+  scopeOrProof: UserManagementScope | string = 'admin',
+  proofToken?: string
 ): Promise<ApiResponse<Partial<User>>> {
+  const { scope, proofToken: requestProof } = resolveScopeAndProof(scopeOrProof, proofToken)
   const path =
     scope === 'channel' ? `${CHANNEL_USERS_BASE}/manage` : '/api/user/manage'
-  const res = await api.post(path, { id, action })
+  const res = scope === 'admin' || requestProof
+    ? await api.post(path, { id, action }, securityProofConfig(requestProof))
+    : await api.post(path, { id, action })
   return res.data
 }
 
@@ -192,18 +233,31 @@ export async function adjustUserQuota(
 }
 
 /**
- * Reset user's Passkey registration
+ * Reset user's Passkey registration; requires an `admin.user.passkey.reset` proof
  */
-export async function resetUserPasskey(id: number): Promise<ApiResponse> {
-  const res = await api.delete(`/api/user/${id}/reset_passkey`)
+export async function resetUserPasskey(
+  id: number,
+  proofToken: string
+): Promise<ApiResponse> {
+  const res = await api.delete(
+    `/api/user/${id}/reset_passkey`,
+    securityProofConfig(proofToken)
+  )
   return res.data
 }
 
 /**
- * Reset user's Two-Factor Authentication setup
+ * Reset user's Two-Factor Authentication setup; requires an
+ * `admin.user.2fa.disable` proof
  */
-export async function resetUserTwoFA(id: number): Promise<ApiResponse> {
-  const res = await api.delete(`/api/user/${id}/2fa`)
+export async function resetUserTwoFA(
+  id: number,
+  proofToken: string
+): Promise<ApiResponse> {
+  const res = await api.delete(
+    `/api/user/${id}/2fa`,
+    securityProofConfig(proofToken)
+  )
   return res.data
 }
 
@@ -243,25 +297,33 @@ export async function getUserOAuthBindings(
 }
 
 /**
- * Clear a user's built-in binding (admin)
+ * Clear a user's built-in binding (admin); requires an
+ * `admin.user.binding.clear` proof bound to the binding type
  */
 export async function adminClearUserBinding(
   userId: number,
-  bindingType: string
+  bindingType: string,
+  proofToken: string
 ): Promise<ApiResponse> {
-  const res = await api.delete(`/api/user/${userId}/bindings/${bindingType}`)
+  const res = await api.delete(
+    `/api/user/${userId}/bindings/${bindingType}`,
+    securityProofConfig(proofToken)
+  )
   return res.data
 }
 
 /**
- * Unbind custom OAuth for a user (admin)
+ * Unbind custom OAuth for a user (admin); requires an
+ * `admin.user.binding.clear` proof bound to the provider ID
  */
 export async function adminUnbindCustomOAuth(
   userId: number,
-  providerId: number
+  providerId: number,
+  proofToken: string
 ): Promise<ApiResponse> {
   const res = await api.delete(
-    `/api/user/${userId}/oauth/bindings/${providerId}`
+    `/api/user/${userId}/oauth/bindings/${providerId}`,
+    securityProofConfig(proofToken)
   )
   return res.data
 }
