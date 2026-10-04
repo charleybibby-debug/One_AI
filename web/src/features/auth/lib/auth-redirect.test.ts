@@ -20,7 +20,11 @@ import { describe, expect, test } from 'vitest'
 
 import type { AuthUser } from '@/stores/auth-store'
 
-import { getSavedLanguage, sanitizeAuthRedirect } from './auth-redirect'
+import {
+  getSavedInterfaceLanguage,
+  getSavedLanguage,
+  sanitizeAuthRedirect,
+} from './auth-redirect'
 
 const origin = 'https://dashboard.example.com'
 
@@ -87,5 +91,12 @@ describe('saved authentication language', () => {
     expect(getSavedLanguage({ ...user, setting: { language: 123 } })).toBe(
       undefined
     )
+  })
+
+  test('does not override the current language when the account has no saved language', () => {
+    expect(getSavedInterfaceLanguage(user)).toBe(undefined)
+    expect(
+      getSavedInterfaceLanguage({ ...user, setting: { language: 'zh-TW' } })
+    ).toBe('zhCN')
   })
 })

@@ -31,6 +31,7 @@ import {
   STATUS_QUERY_KEY,
   ensureStatus,
   statusQueryOptions,
+  mapStatusDataToConfig,
 } from '@/lib/status-query'
 import { useSystemConfigStore } from '@/stores/system-config-store'
 
@@ -47,6 +48,27 @@ const originalGet = apiClient.get
 
 let statusRequests: string[] = []
 const queryClients: QueryClient[] = []
+
+test.each(['Deepsight', 'Deepsights', 'DEEPSIGHT'])(
+  'uses the supplied company logo for %s across system branding',
+  (systemName) => {
+    expect(
+      mapStatusDataToConfig({
+        system_name: systemName,
+        logo: '/old-company-logo.png',
+      }).logo
+    ).toBe('/company-logo.svg')
+  }
+)
+
+test('preserves upstream branding defaults and other configured logos', () => {
+  expect(mapStatusDataToConfig({}).logo).toBe('/logo.png')
+  expect(mapStatusDataToConfig({}).systemName).toBe('New API')
+  expect(
+    mapStatusDataToConfig({ system_name: 'Other Site', logo: '/custom.svg' })
+      .logo
+  ).toBe('/custom.svg')
+})
 
 /** Count `/api/status` calls at the network boundary and serve `system_name`. */
 function stubStatusEndpoint(systemName: string): void {

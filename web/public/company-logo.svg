@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 380 380" role="img" aria-labelledby="title">
+  <title id="title">中科深晰 Deepsights clean D eye mark</title>
+  <defs>
+    <linearGradient id="dGradient" x1="36" y1="30" x2="300" y2="330" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#16D9FF"/><stop offset="0.52" stop-color="#237BFF"/><stop offset="1" stop-color="#6B4CF6"/></linearGradient>
+    <linearGradient id="irisGradient" x1="82" y1="128" x2="235" y2="225" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#23D9FF"/><stop offset="1" stop-color="#6257FF"/></linearGradient>
+    <filter id="shadow" x="-25%" y="-25%" width="160%" height="160%"><feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#173B80" flood-opacity=".18"/></filter>
+  </defs>
+  <g transform="translate(37 30)" filter="url(#shadow)">
+    <path d="M42 0H145C239 0 306 66 306 160S239 320 145 320H42C28 320 16 308 16 294V26C16 12 28 0 42 0Z" fill="url(#dGradient)"/>
+    <path d="M93 53H144C208 53 252 94 252 160S208 267 144 267H93V53Z" fill="#F7FBFF"/>
+    <path d="M111 160C127 137 151 124 178 124C205 124 229 137 245 160C229 183 205 196 178 196C151 196 127 183 111 160Z" fill="url(#irisGradient)"/>
+    <circle cx="178" cy="160" r="24" fill="#F7FBFF"/><circle cx="178" cy="160" r="11" fill="#173A91"/><circle cx="184" cy="154" r="4" fill="#FFFFFF" opacity=".9"/>
+  </g>
+</svg>

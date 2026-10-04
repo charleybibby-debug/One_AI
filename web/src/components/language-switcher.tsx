@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Languages, Check } from 'lucide-react'
+import { Languages, Check, ChevronDown } from 'lucide-react'
 import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -24,6 +24,7 @@ import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
@@ -35,10 +36,13 @@ import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 
-export function LanguageSwitcher() {
+export function LanguageSwitcher(props: { showLabel?: boolean } = {}) {
   const { i18n, t } = useTranslation()
   const user = useAuthStore((s) => s.auth.user)
   const currentLanguage = normalizeInterfaceLanguage(i18n.language)
+  const currentLanguageLabel =
+    INTERFACE_LANGUAGE_OPTIONS.find((lang) => lang.code === currentLanguage)
+      ?.label ?? INTERFACE_LANGUAGE_OPTIONS[0].label
   const handleChangeLanguage = useCallback(
     async (code: string) => {
       await i18n.changeLanguage(code)
@@ -56,27 +60,42 @@ export function LanguageSwitcher() {
   return (
     <DropdownMenu modal={false}>
       <DropdownMenuTrigger
-        render={<Button variant='ghost' size='icon' className='h-9 w-9' />}
+        render={
+          <Button
+            variant='ghost'
+            size={props.showLabel ? 'sm' : 'icon'}
+            className={cn('h-9', props.showLabel ? 'gap-2 px-3' : 'w-9')}
+          />
+        }
       >
         <Languages className='size-[1.2rem]' />
-        <span className='sr-only'>{t('Change language')}</span>
+        {props.showLabel ? (
+          <span>{currentLanguageLabel}</span>
+        ) : (
+          <span className='sr-only'>{t('Change language')}</span>
+        )}
+        {props.showLabel && (
+          <ChevronDown className='size-3.5' aria-hidden='true' />
+        )}
       </DropdownMenuTrigger>
       <DropdownMenuContent align='end'>
-        {INTERFACE_LANGUAGE_OPTIONS.map((lang) => (
-          <DropdownMenuItem
-            key={lang.code}
-            onClick={() => handleChangeLanguage(lang.code)}
-          >
-            {lang.label}
-            <Check
-              size={14}
-              className={cn(
-                'ms-auto',
-                currentLanguage !== lang.code && 'hidden'
-              )}
-            />
-          </DropdownMenuItem>
-        ))}
+        <DropdownMenuGroup>
+          {INTERFACE_LANGUAGE_OPTIONS.map((lang) => (
+            <DropdownMenuItem
+              key={lang.code}
+              onClick={() => handleChangeLanguage(lang.code)}
+            >
+              {lang.label}
+              <Check
+                size={14}
+                className={cn(
+                  'ms-auto',
+                  currentLanguage !== lang.code && 'hidden'
+                )}
+              />
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuGroup>
       </DropdownMenuContent>
     </DropdownMenu>
   )
